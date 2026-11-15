@@ -1,12 +1,12 @@
 /*
  * candidates.js - suggested points of interest. DOM-free.
  *
- * Input : grid (terrain.js) and crism = { hyd, ... } ImageData from data.js.
+ * Input : grid (terrain.js), crism = { hyd, ... } ImageData from data.js ({} when absent) and the body profile
+ *         (app/bodies/<id>.json: habitat and fixed targets).
  * Output: buildCandidates() -> ordered list [{ key, name, src, lat, lng }] used by the "+" button and the default route.
  * Used by: main.js and tests/route.test.html.
  */
-import { RAD_POINT, HAB_PX } from './config.js';
-import { cellOf, pxToLL } from './terrain.js';
+import { cellOf } from './terrain.js';
 
 // Points suggested by CRISM: local maxima of the sulfate signal (HYD), spaced ~200 m apart
 export function crismCandidates(grid, crism, channel) {
@@ -30,18 +30,13 @@ export function crismCandidates(grid, crism, channel) {
   return out;
 }
 
-// Ordered list of suggested points: fixed targets, then the 8 strongest sulfate signals
-// of each type, from nearest to farthest from the default habitat
-export function buildCandidates(grid, crism) {
-  if (grid.meta.example !== 'gale') return [];
-  var hab = pxToLL(grid, HAB_PX[0], HAB_PX[1]), cos = Math.cos(hab.lat * Math.PI / 180);
+// Ordered list of suggested points: the profile's fixed targets, then (when the CRISM layer is on) the 8
+// strongest sulfate signals of each type, from nearest to farthest from the default habitat. May be empty.
+export function buildCandidates(grid, crism, body) {
+  var hab = body.habitat, cos = Math.cos(hab.lat * Math.PI / 180);
   function dist(p) { return Math.hypot((p.lat - hab.lat), (p.lng - hab.lng) * cos); }
-  var CANDS = [
-    Object.assign({ key: 'boxwork', name: 'Boxwork ridge network (north)', src: 'HiRISE' }, pxToLL(grid, 1960, 1711)),
-    { key: 'msl4670', name: 'Curiosity point, sol 4670', src: 'Curiosity / RAD', lat: RAD_POINT.lat, lng: RAD_POINT.lng },
-    Object.assign({ key: 'mesa', name: 'Edge of the pale mesa (layers)', src: 'HiRISE' }, pxToLL(grid, 1682, 2358))
-  ];
-  var cr = !crism.hyd ? [] : crismCandidates(grid, crism, 0).map(function (c) { return { kind: 'poly', c: c }; })
+  var CANDS = (body.targets || []).map(function (t) { return Object.assign({}, t); });
+  var cr = !(crism && crism.hyd) ? [] : crismCandidates(grid, crism, 0).map(function (c) { return { kind: 'poly', c: c }; })
     .concat(crismCandidates(grid, crism, 1).map(function (c) { return { kind: 'mono', c: c }; }));
   cr.sort(function (a, b) { return dist(a.c) - dist(b.c); });
   var cnt = { poly: 0, mono: 0 }, seen = [];

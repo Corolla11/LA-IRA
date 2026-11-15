@@ -1,0 +1,29 @@
+{
+  "id": "moon", "name": "Moon · Apollo 17 (Taurus-Littrow)",
+  "subtitle": "Apollo 17 landing site, Taurus-Littrow valley · 2.46 × 2.46 km area · NASA data (LROC NAC, LRO CRaTER)",
+  "notes": [
+    "Image: LROC NAC mosaic A17_60x60km.eq, zoom 15, NASA Moon Trek.",
+    "Elevation and slope: LROC NAC DTM NAC_DTM_APOLLO17 (5 m), in ~2.4 m cells. Features smaller than ~10 m do not appear.",
+    "Radiation: reference 5.1 µGy/h (silicon) derived from LRO CRaTER in 50 km orbit (Mazur et al. 2011): /0.7 to open space, ×0.5 for the Moon blocking half the sky. Map = that value × visible sky fraction.",
+    "No thermal, mineral or traverse layers on this body: no sand penalty and no mineral suggestions; mark points on the map.",
+    "Speed uses the Tobler walking function (an Earth model) with v0 = 2.0 km/h, an assumption for Apollo-style suited walking."
+  ],
+  "radius_m": 1737400, "v0": 2.0, "doseRate": 5.1,
+  "doseNote": "LRO CRaTER thin detectors ~173 uGy/day (Si) in 50 km orbit, Sep 2009-Feb 2010 (Mazur et al. 2011, Space Weather, doi:10.1029/2010SW000641); /0.7 orbit->interplanetary, x0.5 half sky at the surface",
+  "radPoint": {"lat": 20.1908, "lng": 30.7717},
+  "habitat": {"lat": 20.1908, "lng": 30.7717},
+  "area": {"latN": 20.2313628, "latS": 20.1502372, "lonW": 30.7284813, "lonE": 30.8149187},
+  "N": 1000,
+  "attribution": "NASA/GSFC/Arizona State University (LROC) · NASA Moon Trek · Leaflet",
+  "targets": [],
+  "sources": [
+    {"id": "elevation", "label": "Topography (LROC NAC DTM, 5 m)", "required": true, "adapter": "imageserver-dem",
+     "url": "https://trek.nasa.gov/moon/trekarcgis/rest/services/NAC_DTM_APOLLO17/ImageServer", "sr": 104903,
+     "check": "https://trek.nasa.gov/moon/trekarcgis/rest/services/NAC_DTM_APOLLO17/ImageServer?f=json"},
+    {"id": "optical", "label": "Optical (LROC NAC mosaic)", "adapter": "wmts",
+     "url": "https://trek.nasa.gov/tiles/Moon/EQ/A17_60x60km.eq/1.0.0/default/default028mm/{z}/{row}/{col}.png", "zoom": 15},
+    {"id": "hillshade", "label": "Hillshade (from the DTM)", "adapter": "imageserver-hillshade",
+     "url": "https://trek.nasa.gov/moon/trekarcgis/rest/services/NAC_DTM_APOLLO17/ImageServer", "sr": 104903,
+     "check": "https://trek.nasa.gov/moon/trekarcgis/rest/services/NAC_DTM_APOLLO17/ImageServer?f=json"}
+  ]
+}

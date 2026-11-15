@@ -18,8 +18,25 @@ export function fmtClock(s) { if (!isFinite(s)) return '–'; var m = Math.round
 export function setStatus(t, cls) { var s = $('#status'); s.textContent = t; s.className = 'pill ' + cls; }
 export function setRadRange(min, max) { $('#radMin').textContent = nf(min, 2); $('#radMax').textContent = nf(max, 2); }
 export function setSolRange(trav) {
-  var sols = trav.map(function (p) { return p[0]; });
-  if (sols.length) $('[data-sol-range]').textContent = Math.min.apply(null, sols) + '–' + Math.max.apply(null, sols);
+  var el = $('[data-sol-range]'), sols = trav ? trav.map(function (p) { return p[0]; }) : [];
+  if (!el) return;   // the source notes were replaced by the body profile's notes
+  if (sols.length) el.textContent = Math.min.apply(null, sols) + '–' + Math.max.apply(null, sols);
+  var li = el.closest('li'); if (li) li.style.display = sols.length ? '' : 'none';
+}
+// Hides the controls of layers absent from the manifest (layers[id] === false) and unchecks them.
+// hasRad = false also hides the radiation layer (body without a dose rate).
+export function applyLayerUI(manifest, hasRad) {
+  var L = (manifest && manifest.layers) || {};
+  function hide(sel, row, on) {
+    var el = $(sel); if (!el) return;
+    if (!on) el.checked = false;
+    var r = el.closest(row); if (r) r.style.display = on ? '' : 'none';
+  }
+  hide('#lThemis', '.layer-item', L.thermal !== false);
+  hide('#lCrism', '.layer-item', L.minerals !== false);
+  hide('#lHill', 'label', L.hillshade !== false);
+  hide('#lTrav', 'label', L.traverse !== false);
+  hide('#lRad', '.layer-item', hasRad !== false);
 }
 export function setModeUI(m) {
   $('#btnAdd').setAttribute('aria-pressed', m === 'add'); $('#btnHab').setAttribute('aria-pressed', m === 'hab');

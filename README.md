@@ -5,10 +5,14 @@
   Ares - Integrated route assistant
   </h1>
 </div>
-EVA (extravehicular walk) planning tool for an astronaut on Mars, built for the NASA Space Apps challenge. It covers a 2.46 x 2.46 km area around the Mount Sharp boxwork formations in Gale crater, explored by Curiosity in 2025.
+EVA (extravehicular walk) planning tool for astronauts, built for the NASA Space Apps challenge. Two bodies are included: Mars (a 2.46 x 2.46 km area around the Mount Sharp boxwork formations in Gale crater, explored by Curiosity in 2025) and the Moon (the Apollo 17 landing site in the Taurus-Littrow valley, with only topography and optical imagery). Data sources are modular: on load the app checks every source and the user picks which layers feed the planner.
 
 ## What it does
 
+- Startup screen: pick the body, see which data sources respond (OK / FAIL), choose the layers used by
+  the planner and optionally paste your own source URL (ArcGIS ImageServer or WMTS). Topography is
+  required; if it fails the planner cannot be opened. The URL "similarity" check is a placeholder that
+  always passes for now.
 - HiRISE map (~0.6 m/pixel) with toggleable layers:
   - slope from the HiRISE DTM (caution and blocked);
   - CRISM minerals (sulfates, clays, carbonates);
@@ -38,17 +42,45 @@ Python 3.12 and [uv](https://docs.astral.sh/uv/). No Node, no bundler.
 
 ```
 uv sync
-uv run tools/prepare_data.py --out app/data   # downloads and crops the NASA data
 uv run tools/serve.py                         # http://localhost:8765/
 ```
 
+The startup screen downloads and converts the selected sources on demand into `app/data/<body>/`.
+To prepare a body from the command line instead: `uv run tools/prepare_data.py --body mars` (or `moon`).
+
 Open http://localhost:8765/; it redirects to `/app/`. Opening `index.html` from disk does not work (the app fetches data and ES modules). `tools/serve.py` is used instead of `python -m http.server` because Windows may serve `.js` as `text/plain`.
+
+## Bodies and data sources
+
+Each body is described by `app/bodies/<id>.json` (listed in `app/bodies/index.json`): area bounds, grid
+size `N`, radius, base walking speed `v0`, radiation reference (`doseRate`, `radPoint`), default habitat,
+fixed suggested targets, texts, and its `sources`. A source has an id (`elevation` (required), `optical`,
+`hillshade`, `thermal`, `minerals`, `traverse`), a label, an `adapter` and a `url`. Adapters live in
+`tools/adapters.py`:
+
+| Adapter | What it does |
+|---|---|
+| `imageserver-dem` | ArcGIS ImageServer `exportImage` as raw float32 -> `elev.txt` + `meta.json` |
+| `imageserver-hillshade` | Same ImageServer with the `Hillshade` raster function -> `hillshade.jpg` |
+| `wmts` | Stitches WMTS tiles over the area and crops them -> `hirise.jpg` |
+| `mars:<step>` | Calls the existing Gale step of `tools/prepare_data.py` (Mars output stays byte-identical) |
+
+`tools/serve.py` exposes `GET /api/bodies`, `GET /api/sources?body=<id>` (one live check per source) and
+`POST /api/prepare` (`{"body", "layers", "overrides"}`), which writes `app/data/<id>/manifest.json` and a
+schema 1 `meta.json` (below) that lists only the selected layers.
+
+Moon (Apollo 17): topography `NAC_DTM_APOLLO17` (LROC NAC DTM, 5 m) and optical `A17_60x60km.eq`
+(LROC NAC mosaic) from NASA Moon Trek. Radiation reference 5.1 µGy/h in silicon, derived from LRO CRaTER
+in 50 km orbit (Mazur et al. 2011, Space Weather, doi:10.1029/2010SW000641): /0.7 to open space and x0.5
+because the Moon blocks half the sky. `v0` = 2.0 km/h is an assumption; the Tobler walking function is an
+Earth model, not calibrated for suited walking in low gravity. Lunar south-pole sites were not used: the
+equirectangular polar DEMs on Moon Trek have gaps or are stretched near the pole.
 
 ## Bring your own terrain
 
 The NASA downloader is specific to the Gale crater example; it is not a
 generic planetary data downloader. To use another body, supply a prepared
-package in `app/data/` containing:
+package in `app/data/<body>/` (or add a body profile and let the adapters build it) containing:
 
 - `meta.json`, with the schema below. `body.radius` is the spherical radius
   in metres; longitude and latitude are degrees in an equirectangular grid.
@@ -74,7 +106,7 @@ habitat and stops on the map. Sand classification and radiation dose are
 shown as unavailable, not zero. The walking model and limits remain user
 assumptions, not validated predictions for the selected body.
 
-Optional `layers` entries reference files relative to `app/data/`: `image`
+Optional `layers` entries reference files relative to the package folder: `image`
 and `hillshade` are images covering the grid bounds; `thermal` is a square
 THEMIS-style night-thermal image and requires the `themisSize` pixel width.
 Thermal classification is a regional heuristic, not a measured sand map.
@@ -92,7 +124,7 @@ accurate: input provenance, calibration, registration and model validity
 must be checked for each body.
 
 The old generated `meta.json` has no schema or body radius. Regenerate it
-with `uv run tools/prepare_data.py --out app/data` before using this version;
+with `uv run tools/prepare_data.py --body mars` before using this version;
 an existing package without schema 1 is rejected rather than silently
 interpreted as Mars.
 

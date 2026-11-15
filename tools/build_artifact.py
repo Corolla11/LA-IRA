@@ -29,7 +29,10 @@ def strip_wrapper(html: bytes) -> bytes:
 def build(app: Path = ROOT / "app", out: Path = ROOT / "dist" / "artifact") -> dict[str, str]:
     """Rebuild `out` from `app` (deleting `out` first); exit with a message if data files are missing.
     Returns the files.json mapping {published path: repo-relative source path}."""
-    meta_path = app / "data" / "meta.json"
+    # Packages live in app/data/<body>/ (tools/serve.py); the artifact publishes the Mars package, or a
+    # single package placed directly in app/data/.
+    data = app / "data" / "mars" if (app / "data" / "mars" / "meta.json").is_file() else app / "data"
+    meta_path = data / "meta.json"
     if not meta_path.is_file():
         sys.exit("app/data/meta.json is missing")
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -39,7 +42,7 @@ def build(app: Path = ROOT / "app", out: Path = ROOT / "dist" / "artifact") -> d
     data_files = ["elev.txt"]
     data_files.extend(layers[key] for key in ("image", "hillshade", "thermal", "traverse") if key in layers)
     data_files.extend(layers.get("crism", {}).values())
-    missing = [f for f in data_files if not (app / "data" / f).is_file()]
+    missing = [f for f in data_files if not (data / f).is_file()]
     if missing:
         sys.exit(f"app/data is missing {', '.join(missing)}: run `uv run tools/prepare_data.py --out app/data` first")
     if out.exists():

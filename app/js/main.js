@@ -1,19 +1,20 @@
 /*
  * main.js - entry point (loaded as a module by index.html). Owns the app state and wires everything together.
  *
- * Flow: loadData -> buildTerrain -> buildCandidates -> initMap -> bindParams -> plan().
+ * Flow: runGate (sources.js: body + layers) -> start(body, manifest) -> loadData -> buildTerrain -> buildCandidates -> initMap -> bindParams -> plan().
  * plan() runs A* (route.js) only when geometry or limits change; EVA duration, reserve and stop time
  * only call refresh() (schedule), without rerunning A*.
  */
-import { DEFAULT_PARAMS, HAB_PX, MAX_STOPS } from './config.js';
+import { DEFAULT_PARAMS, MAX_STOPS } from './config.js';
+import { runGate } from './sources.js';
 import { loadData } from './data.js';
-import { buildTerrain, cellOf, pxToLL, doseAt } from './terrain.js';
+import { buildTerrain, cellOf, doseAt } from './terrain.js';
 import { planRoute, returnMap, nextFrame } from './route.js';
 import { buildCandidates } from './candidates.js';
 import { initMap, setCursor, toggleLayer, renderSlope, renderReturn, renderCrism, renderRoute } from './map.js';
-import { $, nf, fmtMin, setStatus, setRadRange, setSolRange, setModeUI, refreshTimes, renderSegments, drawProfile, bindParams } from './ui.js';
+import { $, nf, fmtMin, setStatus, setRadRange, setSolRange, setModeUI, applyLayerUI, refreshTimes, renderSegments, drawProfile, bindParams } from './ui.js';
 
-var grid, raw, CANDS = [], cache = { sig: '', map: new Map() };
+var body, grid, raw, CANDS = [], cache = { sig: '', map: new Map() };
 var runToken = 0, lastPlan = null, retMap = null, retKey = '';
 var state = { habitat: null, stops: [], mode: null, p: Object.assign({}, DEFAULT_PARAMS) };
 
@@ -75,7 +76,7 @@ function setMode(m) {
   state.mode = m; setModeUI(m); setCursor(m ? 'crosshair' : '');
 }
 function defaults() {
-  var pos = grid.meta.example === 'gale' ? pxToLL(grid, HAB_PX[0], HAB_PX[1]) :
+  var pos = body.habitat ? { lat: body.habitat.lat, lng: body.habitat.lng } :
     { lat: (grid.meta.latN + grid.meta.latS) / 2, lng: (grid.meta.lonW + grid.meta.lonE) / 2 };
   state.habitat = Object.assign({ name: 'Habitat' }, pos);
   state.stops = CANDS.slice(0, 4).map(function (c) { return Object.assign({}, c, { work: state.p.work }); });
@@ -114,9 +115,13 @@ window.evaDebug = function () {
   };
 };
 
-async function start() {
+// body = profile from app/bodies/<id>.json, manifest = layers the user picked (written by /api/prepare;
+// the same selection is in data/<id>/meta.json "layers", which is what loadData reads)
+async function start(bodyProfile, manifest) {
+  body = bodyProfile;
+  state.p.v0 = body.v0 || DEFAULT_PARAMS.v0;
   try {
-    raw = await loadData('data/');
+    raw = await loadData('data/' + body.id + '/');
     grid = buildTerrain(raw);
   } catch (err) {
     setStatus('Error loading data', 'bad');
@@ -126,14 +131,14 @@ async function start() {
   }
   if (grid.DOSE) { setRadRange(grid.doseMin, grid.doseMax); $('#radRef').textContent = nf(grid.meta.radiation.rate, 2) + ' reference'; }
   else $('#radRef').textContent = 'unavailable';
-  document.querySelector('.sub').textContent = (grid.meta.name || 'Exploration area') + ' · ' + grid.meta.body.name;
-  if (grid.meta.example !== 'gale') {
-    $('#galeSources').hidden = true;
-    $('#candidateNote').textContent = 'Mark points on the map. No suggested points were supplied.';
-  }
+  $('#subtitle').textContent = body.subtitle || ((grid.meta.name || 'Exploration area') + ' · ' + grid.meta.body.name);
+  if (body.notes) $('#sourceNotes').replaceChildren.apply($('#sourceNotes'), body.notes.map(function (t) { var li = document.createElement('li'); li.textContent = t; return li; }));
+  $('#pV0').value = state.p.v0; $('#pV0').dispatchEvent(new Event('input'));
   setSolRange(raw.trav);
-  CANDS = buildCandidates(grid, raw.crism);
-  initMap(grid, raw.trav, raw.crism, { onMove: onMove, onClick: onClick });
+  CANDS = buildCandidates(grid, raw.crism, body);
+  if (!CANDS.length) $('#candidateNote').textContent = 'Mark points on the map. No suggested points were supplied.';
+  initMap(grid, raw.trav, raw.crism, { onMove: onMove, onClick: onClick }, 'data/' + body.id + '/');
+  applyLayerUI(manifest, !!grid.DOSE);
   defaults();
   bindParams(state.p, {
     replan: plan, refresh: refresh,
@@ -155,4 +160,4 @@ async function start() {
   });
   plan();
 }
-start();
+runGate(start);

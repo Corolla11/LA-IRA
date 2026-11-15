@@ -1,0 +1,36 @@
+{
+  "id": "mars", "name": "Mars · Gale crater (Mount Sharp)",
+  "subtitle": "Mount Sharp, Gale crater · 2.46 × 2.46 km area · NASA data (HiRISE, DTM, CRISM, THEMIS, RAD)",
+  "radius_m": 3396190, "v0": 1.5, "doseRate": 6.55,
+  "doseNote": "Curiosity RAD (PDS PPI MSL-M-RAD-3-RDR-V1.0), mean E dose 6.55 uGy/h on sols 4669-4673",
+  "radPoint": {"lat": -4.8082, "lng": 137.3811},
+  "habitat": {"lat": -4.8181915283203125, "lng": 137.38388299942017},
+  "area": {"latN": -4.78729248046875, "latS": -4.8284912109375, "lonW": 137.35931396484375, "lonE": 137.4005126953125},
+  "N": 1000,
+  "attribution": "NASA/JPL/University of Arizona (HiRISE) · NASA Mars Trek · PDS · Leaflet",
+  "targets": [
+    {"key": "boxwork", "name": "Boxwork ridge network (north)", "src": "HiRISE", "lat": -4.805649518966675, "lng": 137.3803424835205},
+    {"key": "msl4670", "name": "Curiosity point, sol 4670", "src": "Curiosity / RAD", "lat": -4.8082, "lng": 137.3811},
+    {"key": "mesa", "name": "Edge of the pale mesa (layers)", "src": "HiRISE", "lat": -4.812591075897217, "lng": 137.37735986709595}
+  ],
+  "sources": [
+    {"id": "elevation", "label": "Topography (Gale 1 m DTM)", "required": true, "adapter": "mars:elev",
+     "url": "https://trek.nasa.gov/mars/trekarcgis/rest/services/Gale_DEM_SMG_1m/ImageServer",
+     "check": "https://trek.nasa.gov/mars/trekarcgis/rest/services/Gale_DEM_SMG_1m/ImageServer?f=json"},
+    {"id": "optical", "label": "Optical (HiRISE mosaic)", "adapter": "mars:hirise",
+     "url": "https://trek.nasa.gov/tiles/Mars/EQ/curiosity_hirise_mosaic/1.0.0/default/default028mm/{z}/{row}/{col}.png",
+     "check": "https://trek.nasa.gov/tiles/Mars/EQ/curiosity_hirise_mosaic/1.0.0/default/default028mm/16/34518/115554.png"},
+    {"id": "hillshade", "label": "Hillshade (from the DTM)", "adapter": "mars:hillshade",
+     "url": "https://trek.nasa.gov/mars/trekarcgis/rest/services/Gale_DEM_SMG_1m/ImageServer",
+     "check": "https://trek.nasa.gov/mars/trekarcgis/rest/services/Gale_DEM_SMG_1m/ImageServer?f=json"},
+    {"id": "thermal", "label": "Thermal (THEMIS night IR)", "adapter": "mars:themis",
+     "url": "https://trek.nasa.gov/tiles/Mars/EQ/THEMIS_NightIR_ControlledMosaics_100m_v2_oct2018/1.0.0/default/default028mm/9/269/902.png",
+     "check": "https://trek.nasa.gov/tiles/Mars/EQ/THEMIS_NightIR_ControlledMosaics_100m_v2_oct2018/1.0.0/default/default028mm/9/269/902.png"},
+    {"id": "minerals", "label": "Minerals (CRISM MTRDR)", "adapter": "mars:crism",
+     "url": "https://pds-geosciences.wustl.edu/mro/mro-m-crism-5-rdr-mptargeted-v1/mrocr_4001/browse/2008/2008_191/frt0000b6f1/frt0000b6f1_07_brhydj_mtr3.lbl",
+     "check": "https://pds-geosciences.wustl.edu/mro/mro-m-crism-5-rdr-mptargeted-v1/mrocr_4001/browse/2008/2008_191/frt0000b6f1/frt0000b6f1_07_brhydj_mtr3.lbl"},
+    {"id": "traverse", "label": "Curiosity traverse (MSL waypoints)", "adapter": "mars:traverse",
+     "url": "https://mars.nasa.gov/mmgis-maps/MSL/Layers/json/MSL_waypoints.json",
+     "check": "https://mars.nasa.gov/mmgis-maps/MSL/Layers/json/MSL_waypoints.json"}
+  ]
+}
