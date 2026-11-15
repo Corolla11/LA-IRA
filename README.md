@@ -255,7 +255,7 @@ lower-resolution grid:
 
 $$
 \dot D(c)=R_{\text{RAD}}
-\frac{\operatorname{SVF}(c)}{\operatorname{SVF}(c_{\text{ref}})},
+\frac{\text{SVF}(c)}{\text{SVF}(c_{\text{ref}})},
 \qquad
 D_{\text{route}}=\sum_i\dot D(c_i)\frac{\Delta t_i}{3600}
 +\sum_k\dot D(p_k)\frac{w_k}{60}.
