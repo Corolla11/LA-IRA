@@ -1,5 +1,5 @@
 <div align="center">
-  <img width="200" height="200" src="A-IRA.png" alt="A-IRA">
+  <img width="200" height="200" src="LA-IRA.png" alt="A-IRA">
   <h1>LA-IRA
   <br>
   LunarAres - Integrated route assistant
