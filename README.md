@@ -1,2 +1,2 @@
 # A-IRA
-Mars - Integrated route assistant
+Ares - Integrated route assistant
