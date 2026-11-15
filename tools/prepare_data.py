@@ -30,19 +30,22 @@ import json
 import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
 from urllib.parse import quote
 
 import requests
+
+if __package__ == "tools":
+    from .geometry import bbox, bbox_str, crism_crop, ps_6dec, themis_crop, tile_origin
+    from .traverse import latest_traverse
+else:
+    from geometry import bbox, bbox_str, crism_crop, ps_6dec, themis_crop, tile_origin
+    from traverse import latest_traverse
+
 from PIL import Image
-from geometry import bbox, bbox_str, crism_crop, ps_6dec, themis_crop, tile_origin
 
 N = 1000  # elevation grid is N x N cells (~2.4 m each over the 2.46 km area); also meta.json "N"
-MAX_SOL = 4670  # reference sol; keep equal to tests/compare_data.py
 # Mars Trek WMTS tile root (equirectangular, 256 px tiles): <layer>/1.0.0/default/default028mm/<z>/<row>/<col>.png
 TILES = "https://trek.nasa.gov/tiles/Mars/EQ/"
-# Curiosity waypoints (GeoJSON FeatureCollection; properties sol/lat/lon), grows with every sol
-WAYPOINTS = "https://mars.nasa.gov/mmgis-maps/MSL/Layers/json/MSL_waypoints.json"
 # 1 m Gale DTM (Mars Trek ArcGIS ImageServer); used for elevation (exportImage bsq F32) and hillshade
 IMAGE_SERVER = "https://trek.nasa.gov/mars/trekarcgis/rest/services/Gale_DEM_SMG_1m/ImageServer"
 # CRISM MTRDR browse products of observation FRT0000B6F1 (PDS Geosciences); suffixes: hydj_mtr3.lbl,
@@ -58,7 +61,7 @@ def fetch_crism_label() -> list[float]:
     text = requests.get(CRISM_BASE + "hydj_mtr3.lbl", timeout=60).text
     values: list[float] = []
     for name in ("MAP_RESOLUTION", "WESTERNMOST_LONGITUDE", "MAXIMUM_LATITUDE"):
-        match = re.search(name + r"\s*=\s*([-\d.]+)", text, re.I)
+        match = re.search(name + r"\s*=\s*([-\d.]+)", text, re.IGNORECASE)
         if match is None:
             raise ValueError(f"CRISM label is missing {name}")
         values.append(float(match.group(1)))
@@ -169,23 +172,14 @@ def step_themis(out: Path) -> None:
 
 def step_traverse(out: Path) -> None:
     """traverse.json: Curiosity waypoints inside the map.
-    Source: WAYPOINTS (MMGIS GeoJSON; each feature has properties sol, lat, lon). Features that are
-    malformed are skipped. Kept: sol <= MAX_SOL (the live file keeps growing; 4670 is the reference sol,
-    so the output is reproducible) and lat/lon inside the bbox. Sorted by sol (stable).
+    Source: NASA MMGIS waypoint GeoJSON; each feature has properties sol, lat, lon. Features that are
+    malformed are skipped. All reported sols inside the bbox are kept, so newer waypoints are included.
+    Sorted by sol (stable).
     Format: a single line "[[sol,lat,lon],...]\\n", sol rounded to an integer, lat/lon formatted by
     ps_6dec (at most 6 decimals, no trailing zeros), UTF-8 without BOM.
     Consumer: app/js/data.js (JSON.parse) -> map.js draws the traverse; ui.js derives the sol range."""
     lonW, latS, lonE, latN = bbox()
-    feats: list[dict[str, Any]] = requests.get(WAYPOINTS, timeout=120).json()["features"]
-    pts: list[tuple[int, float, float]] = []
-    for feature in feats:
-        p: Any = feature.get("properties") or {}
-        try:  # skip malformed features, as the .ps1 Where-Object did
-            pts.append((round(float(p["sol"])), float(p["lat"]), float(p["lon"])))
-        except (KeyError, TypeError, ValueError):
-            continue
-    pts = sorted((p for p in pts if p[0] <= MAX_SOL and latS <= p[1] <= latN and lonW <= p[2] <= lonE),
-                 key=lambda p: p[0])
+    pts = latest_traverse(lonW, latS, lonE, latN)
     text = "[" + ",".join(f"[{s},{ps_6dec(la)},{ps_6dec(lo)}]" for s, la, lo in pts) + "]\n"
     (out / "traverse.json").write_bytes(text.encode())
 
@@ -230,7 +224,7 @@ def main() -> None:
                 adapters.prepare_source(body, src, out)
                 layers[src["id"]] = True
                 print(src["id"], "ok")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 - report this source and continue building other layers
                 layers[src["id"]] = False
                 print(src["id"], "FAILED:", e)
         adapters.write_manifest(out, body["id"], layers, {})

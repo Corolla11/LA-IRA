@@ -120,7 +120,7 @@ async function start(bodyProfile, manifest) {
   body = bodyProfile;
   state.p.v0 = body.v0 || DEFAULT_PARAMS.v0;
   try {
-    raw = await loadData('data/' + body.id + '/', manifest.layers);
+    raw = await loadData('data/' + body.id + '/', manifest.layers, manifest.live ? body.id : null);
     grid = buildTerrain(raw);
   } catch (err) {
     setStatus('Error loading data', 'bad');

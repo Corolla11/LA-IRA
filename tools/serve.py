@@ -11,47 +11,92 @@ API (JSON):
 """
 import functools
 import json
+import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from io import BytesIO
 from pathlib import Path
+from typing import BinaryIO, NotRequired, TypedDict, TypeGuard, cast
 from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tools"))
-import adapters  # noqa: E402
+sys.path.insert(0, str(ROOT))
+from tools import adapters
 
 DATA_DIR = ROOT / "app" / "data"
 SKIP_DETAIL = "format check skipped (assumed compatible)"
 
 
-def list_bodies():
-    ids = json.loads((adapters.BODIES_DIR / "index.json").read_text("utf-8"))
+class SourcesReport(TypedDict):
+    body: str
+    checks: list[adapters.SourceCheck]
+
+
+class PrepareResponse(TypedDict):
+    ok: bool
+    errors: dict[str, str]
+    manifest: NotRequired[adapters.Manifest]
+    notes: NotRequired[dict[str, str]]
+
+
+def _is_json_object(value: object) -> TypeGuard[dict[str, object]]:
+    if not isinstance(value, dict):
+        return False
+    entries = cast(dict[object, object], value)
+    return all(isinstance(key, str) for key in entries)
+
+
+def _is_string_list(value: object) -> TypeGuard[list[str]]:
+    if not isinstance(value, list):
+        return False
+    items = cast(list[object], value)
+    return all(isinstance(item, str) for item in items)
+
+
+def _is_string_mapping(value: object) -> TypeGuard[dict[str, str]]:
+    if not isinstance(value, dict):
+        return False
+    entries = cast(dict[object, object], value)
+    return all(isinstance(key, str) and isinstance(item, str) for key, item in entries.items())
+
+
+def list_bodies() -> list[dict[str, str]]:
+    ids_value: object = json.loads((adapters.BODIES_DIR / "index.json").read_text("utf-8"))
+    if not _is_string_list(ids_value):
+        raise ValueError("app/bodies/index.json must contain a list of body IDs")
+    ids = ids_value
     return [{"id": i, "name": adapters.load_body(i)["name"]} for i in ids]
 
 
-def body_ids():
+def body_ids() -> list[str]:
     return [b["id"] for b in list_bodies()]
 
 
-def sources_report(body_id):
+def sources_report(body_id: str) -> SourcesReport:
     body = adapters.load_body(body_id)
+
+    def check(source: adapters.Source) -> adapters.SourceCheck:
+        return adapters.check_source(body, source)
+
     with ThreadPoolExecutor(max(1, len(body["sources"]))) as ex:
-        checks = list(ex.map(lambda s: adapters.check_source(body, s), body["sources"]))
+        checks = list(ex.map(check, body["sources"]))
     for c in checks:
         c["prepared"] = (DATA_DIR / body_id / adapters.layer_file(c["id"])).is_file()
     return {"body": body_id, "checks": checks}
 
 
-def prepare(body_id, layers, overrides):
+def prepare(body_id: str, layers: list[str] | None, overrides: dict[str, str] | None) -> tuple[int, PrepareResponse]:
     """Prepare selected layers that are missing or overridden. Returns (status, payload)."""
     body = adapters.load_body(body_id)
     layers, overrides = list(layers or []), dict(overrides or {})
     if "elevation" not in layers:
         return 400, {"ok": False, "errors": {"elevation": "elevation must be selected"}}
     out = DATA_DIR / body_id
-    by_id = {s["id"]: s for s in body["sources"]}
-    result, errors, used = {}, {}, {}
+    by_id: dict[str, adapters.Source] = {s["id"]: s for s in body["sources"]}
+    result: dict[str, bool] = {}
+    errors: dict[str, str] = {}
+    used: dict[str, str] = {}
     for sid in adapters.SOURCE_IDS:
         if sid not in layers:
             result[sid] = False
@@ -69,7 +114,7 @@ def prepare(body_id, layers, overrides):
         try:
             adapters.prepare_source(body, src, out, url)
             result[sid] = True
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - report per-source failures while preparing other layers
             result[sid], errors[sid] = False, str(e)[:300]
     manifest = adapters.write_manifest(out, body_id, result, {k: v for k, v in used.items() if result.get(k)})
     if not manifest["layers"]["elevation"]:
@@ -80,9 +125,13 @@ def prepare(body_id, layers, overrides):
 
 class Handler(SimpleHTTPRequestHandler):
     # Windows may map .js to text/plain via the registry, and browsers refuse ES modules with that type.
-    extensions_map = {**SimpleHTTPRequestHandler.extensions_map, ".js": "text/javascript"}
 
-    def send_json(self, status, payload):
+    def guess_type(self, path: str | os.PathLike[str]) -> str:
+        if os.fspath(path).endswith(".js"):
+            return "text/javascript"
+        return super().guess_type(path)
+
+    def send_json(self, status: int, payload: object) -> None:
         data = json.dumps(payload).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -91,7 +140,7 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def do_GET(self):
+    def do_GET(self) -> None:
         u = urlparse(self.path)
         if u.path == "/api/bodies":
             return self.send_json(200, list_bodies())
@@ -102,7 +151,7 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json(200, sources_report(bid))
         return super().do_GET()
 
-    def send_head(self):
+    def send_head(self) -> BytesIO | BinaryIO | None:
         # "/" redirects to the app, keeping the query string (GET and HEAD)
         url = urlparse(self.path)
         if url.path == "/":
@@ -112,21 +161,31 @@ class Handler(SimpleHTTPRequestHandler):
             return None
         return super().send_head()
 
-    def do_POST(self):
+    def do_POST(self) -> None:
         if urlparse(self.path).path != "/api/prepare":
             return self.send_json(404, {"error": "not found"})
         try:
-            req = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
-            bid = req["body"]
+            req_value: object = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
         except (ValueError, KeyError, TypeError):
+            return self.send_json(400, {"error": "invalid request"})
+        if not _is_json_object(req_value):
+            return self.send_json(400, {"error": "invalid request"})
+        bid = req_value.get("body")
+        raw_layers = req_value.get("layers")
+        raw_overrides = req_value.get("overrides", {})
+        if (
+            not isinstance(bid, str)
+            or (raw_layers is not None and not _is_string_list(raw_layers))
+            or not _is_string_mapping(raw_overrides)
+        ):
             return self.send_json(400, {"error": "invalid request"})
         if bid not in body_ids():
             return self.send_json(404, {"error": "unknown body"})
-        status, payload = prepare(bid, req.get("layers"), req.get("overrides"))
+        status, payload = prepare(bid, raw_layers, raw_overrides)
         self.send_json(status, payload)
 
 
-def make_server(port=0):
+def make_server(port: int = 0) -> ThreadingHTTPServer:
     return ThreadingHTTPServer(("", port), functools.partial(Handler, directory=str(ROOT)))
 
 

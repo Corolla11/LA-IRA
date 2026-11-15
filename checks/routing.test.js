@@ -108,6 +108,27 @@ test('loader only uses layers selected for the deployment', async () => {
   } finally { globalThis.fetch = oldFetch; }
 });
 
+test('loader fetches the latest traverse for live deployments', async () => {
+  const meta = {
+    schema: 1, body: { name: 'Mars', radius: 3396190 }, N: 2,
+    lonW: 0, lonE: 1, latS: 0, latN: 1, layers: { traverse: 'traverse.json' }
+  };
+  const bytes = new Uint8Array(16), oldFetch = globalThis.fetch, requested = [];
+  globalThis.fetch = async url => {
+    requested.push(url);
+    if (url === '/api/traverse?body=mars') {
+      return { ok: true, json: async () => [[4671, -4.8, 137.38]] };
+    }
+    return { ok: true, json: async () => meta, text: async () => Buffer.from(bytes).toString('base64') };
+  };
+  try {
+    const data = await loadData('data/', { elevation: true, traverse: true }, 'mars');
+    assert.deepEqual(data.trav, [[4671, -4.8, 137.38]]);
+    assert.ok(requested.includes('/api/traverse?body=mars'));
+    assert.ok(!requested.includes('data/traverse.json'));
+  } finally { globalThis.fetch = oldFetch; }
+});
+
 test('declared thermal and radiation data enable their models', () => {
   const N = 250, meta = {
     N, body: { name: 'Mars', radius: 3396190 },

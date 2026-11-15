@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.build_vercel import build
+from tools.build_vercel import Deployment, build
 
 
 class VercelBuildTest(unittest.TestCase):
@@ -19,13 +19,13 @@ class VercelBuildTest(unittest.TestCase):
             (app / "bodies" / "mars.json").write_text('{"name":"Mars"}', encoding="utf-8")
             (body_data / "elev.txt").write_text("AAAAAA==", encoding="ascii")
             (body_data / "map.jpg").write_bytes(b"image")
-            meta = {"schema": 1, "layers": {"image": "map.jpg"}}
+            meta: dict[str, object] = {"schema": 1, "layers": {"image": "map.jpg"}}
             (body_data / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
 
             out = root / "dist"
             self.assertEqual(build(app, out), ["mars"])
-            deployment = json.loads((out / "deployment.json").read_text(encoding="utf-8"))
-            self.assertEqual(deployment["mode"], "static")
+            deployment: Deployment = json.loads((out / "deployment.json").read_text(encoding="utf-8"))
+            self.assertEqual(deployment["mode"], "live")
             self.assertTrue(deployment["bodies"][0]["layers"]["elevation"])
             self.assertTrue(deployment["bodies"][0]["layers"]["optical"])
             self.assertFalse(deployment["bodies"][0]["layers"]["thermal"])

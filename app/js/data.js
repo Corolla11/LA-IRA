@@ -33,7 +33,7 @@ export function imageData(im) {
   var cx = cv.getContext('2d'); cx.drawImage(im, 0, 0); return cx.getImageData(0, 0, cv.width, cv.height);
 }
 
-export async function loadData(base, selectedLayers) {
+export async function loadData(base, selectedLayers, liveBody) {
   base = base || 'data/';
   async function get(name) {
     var response = await fetch(base + name);
@@ -69,7 +69,15 @@ export async function loadData(base, selectedLayers) {
   var layers = meta.layers || {};
   if (layers.image) await loadImage(base + layers.image);
   if (layers.hillshade) await loadImage(base + layers.hillshade);
-  var trav = layers.traverse ? await (await get(layers.traverse)).json() : [];
+  var trav = [];
+  if (layers.traverse) {
+    if (liveBody) {
+      var traverseResponse = await fetch('/api/traverse?body=' + encodeURIComponent(liveBody));
+      if (!traverseResponse.ok) throw new Error('Cannot load current traverse: HTTP ' + traverseResponse.status);
+      trav = await traverseResponse.json();
+      if (!Array.isArray(trav)) throw new Error('Current traverse response is invalid.');
+    } else trav = await (await get(layers.traverse)).json();
+  }
   var themis = layers.thermal ? imageData(await loadImage(base + layers.thermal)) : null;
   if (themis && (themis.width !== meta.themisSize || themis.height !== meta.themisSize || meta.themisSize < 2)) {
     throw new Error('Thermal image dimensions do not match themisSize.');

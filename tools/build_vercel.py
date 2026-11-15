@@ -131,7 +131,7 @@ def build(app: Path = ROOT / "app", out: Path = ROOT / "dist" / "vercel") -> lis
     for body_id, _, _, data in packages:
         shutil.copytree(data, out / "data" / body_id)
     deployment: Deployment = {
-        "mode": "static",
+        "mode": "live",
         "bodies": [{"id": body_id, "name": name, "layers": layers}
                    for body_id, name, layers, _ in packages],
     }

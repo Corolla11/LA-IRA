@@ -52,7 +52,7 @@ export function runGate(onReady) {
         cb.disabled = busy || !c.ok || req;
         inp.disabled = true; inp.hidden = true;
         inp.dataset.lock = '1';
-        note.hidden = false; note.textContent = 'Only packaged data is available in this deployment.';
+        note.hidden = false; note.textContent = 'Custom source URLs are unavailable in this deployment.';
       }
       list.appendChild(li);
     }
@@ -81,7 +81,9 @@ export function runGate(onReady) {
       }
       render(); setBusy(false);
       const bad = checks.filter((c) => !c.ok).length;
-      say(deployment ? (elevOk() ? 'Static deployment: only included data sources are available.'
+      say(deployment ? (elevOk() ? deployment.mode === 'live'
+          ? 'Packaged layers are ready; the Curiosity traverse is refreshed from NASA when you open the planner.'
+          : 'Static deployment: only included data sources are available.'
           : 'Topography is not included in this deployment.')
         : !elevOk() ? 'Topography (required) is not reachable. Fix the source or its URL and re-check.'
         : bad ? bad + ' source(s) failed and are unchecked. Select the layers to use, then open.'
@@ -101,7 +103,7 @@ export function runGate(onReady) {
         const c = checks.find((x) => x.id === src.id);
         layers[src.id] = !!(c && c.ok && (checked[src.id] || src.required));
       }
-      done({ body: profile.id, layers: layers, overrides: {} });
+      done({ body: profile.id, layers: layers, overrides: {}, live: deployment.mode === 'live' });
       return;
     }
     const layers = profile.sources.filter((s) => checked[s.id] || s.required).map((s) => s.id);
@@ -141,8 +143,8 @@ export function runGate(onReady) {
       if (deploymentResponse.status !== 404) {
         if (!deploymentResponse.ok) throw new Error('HTTP ' + deploymentResponse.status + ' from /deployment.json');
         deployment = await deploymentResponse.json();
-        if (!deployment || deployment.mode !== 'static' || !Array.isArray(deployment.bodies)) {
-          throw new Error('invalid static deployment configuration');
+        if (!deployment || !['static', 'live'].includes(deployment.mode) || !Array.isArray(deployment.bodies)) {
+          throw new Error('invalid deployment configuration');
         }
         bGo.textContent = 'Open planner';
       }
