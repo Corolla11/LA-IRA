@@ -1,14 +1,16 @@
 import json
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-from build_artifact import build
+from tools.build_artifact import build, strip_wrapper
 
 
 class ArtifactTest(unittest.TestCase):
+    def test_strip_wrapper_rejects_missing_body(self):
+        with self.assertRaisesRegex(ValueError, "opening body"):
+            strip_wrapper(b"<html></html>")
+
     def test_topography_only_package_and_missing_declared_layer(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -17,7 +19,7 @@ class ArtifactTest(unittest.TestCase):
             data.mkdir(parents=True)
             (app / "index.html").write_bytes(b"<body>\n<title>Test</title>\n</body>")
             (data / "elev.txt").write_text("AAAAAA==", encoding="ascii")
-            meta = {"schema": 1}
+            meta: dict[str, object] = {"schema": 1}
             (data / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
             result = build(app, root / "out")
             self.assertIn("data/elev.txt", result)

@@ -18,12 +18,15 @@ def strip_wrapper(html: bytes) -> bytes:
     """Return the bytes between the <body ...> tag (plus its line break) and the last </body>, with
     trailing whitespace replaced by one LF. Note: <title> and <link>/<style> placed in <head> must
     therefore live inside <body> in app/index.html (tests/test_artifact.py expects it to start with <title>)."""
-    start = re.search(rb"<body[^>]*>\r?\n?", html, re.I).end()
+    body = re.search(rb"<body[^>]*>\r?\n?", html, re.I)
+    if body is None:
+        raise ValueError("HTML is missing an opening body tag")
+    start = body.end()
     end = html.rindex(b"</body>")
     return html[start:end].rstrip() + b"\n"
 
 
-def build(app: Path = ROOT / "app", out: Path = ROOT / "dist" / "artifact") -> dict:
+def build(app: Path = ROOT / "app", out: Path = ROOT / "dist" / "artifact") -> dict[str, str]:
     """Rebuild `out` from `app` (deleting `out` first); exit with a message if data files are missing.
     Returns the files.json mapping {published path: repo-relative source path}."""
     meta_path = app / "data" / "meta.json"
@@ -42,7 +45,7 @@ def build(app: Path = ROOT / "app", out: Path = ROOT / "dist" / "artifact") -> d
     if out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True)
-    files = {}
+    files: dict[str, str] = {}
     for p in sorted(app.rglob("*")):
         if not p.is_file():
             continue

@@ -20,7 +20,7 @@ class ServerTest(unittest.TestCase):
             thread = threading.Thread(target=server.serve_forever)
             thread.start()
             try:
-                conn = http.client.HTTPConnection(*server.server_address)
+                conn = http.client.HTTPConnection("127.0.0.1", server.server_port)
                 for method in ("GET", "HEAD"):
                     conn.request(method, "/?example=1")
                     response = conn.getresponse()
