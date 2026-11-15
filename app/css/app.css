@@ -182,7 +182,7 @@ td.bad { color: var(--bad); }
 
 /* Startup gate: covers the app until the user picked a body and prepared its data sources (js/sources.js) */
 .gate { position: fixed; inset: 0; z-index: 2000; overflow-y: auto; display: block; background: var(--bg);
-  padding: 16px max(16px, env(safe-area-inset-right, 0px)) 16px max(16px, env(safe-area-inset-left, 0px)); }
+  padding: 16px max(16px, env(safe-area-inset-right, 0px)) 16px max(16px, env(safe-area-inset-left, 0px)); align-content: center;}
 .gate[hidden] { display: none; }
 .gate-box { width: min(720px, 100%); margin: 0 auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 14px; display: grid; gap: 12px; color: var(--ink); }
 .gate-box .sub { color: var(--muted); font-size: 0.85rem; }
