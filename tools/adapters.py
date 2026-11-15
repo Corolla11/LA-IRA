@@ -245,8 +245,8 @@ def write_meta(out: Path, body: BodyProfile, layers: Mapping[str, bool]) -> dict
     out = Path(out)
     meta: dict[str, Any] = json.loads((out / "meta.json").read_text("utf-8"))
     meta.update({"schema": 1, "name": body.get("subtitle", body["name"]).split(" · ")[0],
-                 "body": {"name": body["name"].split(" · ")[0], "radius": body["radius_m"]},
-                 "layers": {META_LAYERS[i][0]: META_LAYERS[i][1] for i in META_LAYERS if layers.get(i)}})
+                "body": {"name": body["name"].split(" · ")[0], "radius": body["radius_m"]},
+                "layers": {META_LAYERS[i][0]: META_LAYERS[i][1] for i in META_LAYERS if layers.get(i)}})
     dose_rate = body.get("doseRate")
     rad_point = body.get("radPoint")
     if dose_rate:
