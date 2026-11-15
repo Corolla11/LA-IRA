@@ -2,6 +2,8 @@
  * Browser copy of each body's data package (IndexedDB 'aira-cache', store 'files',
  * key "<body>/<file>" -> { sha256, blob, savedAt }).
  */
+import { LIVE_RADIATION_BODY } from './config.js';
+
 var dbp = null, checks = {};
 function db() {
   return dbp || (dbp = new Promise(function (res, rej) {
@@ -178,8 +180,8 @@ function liveEndpoint(bodyId, name) {
 async function checkLiveUpdates(bodyId, status) {
   if (!status || !status.files) throw new Error('The deployment data status is unavailable.');
   var diffs = [], errors = {};
-  var names = Object.keys(status.files).filter(function (name) { return name !== 'meta.json'; });
-  names.push('radiation.json');
+  var names = Object.keys(status.files).filter(function (name) { return name !== 'meta.json' && name !== 'radiation.json'; });
+  if (bodyId === LIVE_RADIATION_BODY) names.push('radiation.json');
   await Promise.all(names.map(async function (name) {
     try {
       var rec = await getVerified(bodyId + '/' + name, name);

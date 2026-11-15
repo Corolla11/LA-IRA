@@ -153,7 +153,8 @@ selected. Unchanged files receive a bodyless HTTP 304 response.
 | `/api/radiation?body=mars` | mean RAD E dose of the newest 5 sols and the position of Curiosity at that time |
 
 The RAD products are ~70 MB per sol, so the function reads only the dose values with HTTP range
-requests. If a check fails, the previously saved or deployed data remains in use and the error is
+requests. Only Mars has a live radiation source; the Moon uses its packaged CRaTER-based reference.
+If a check fails, the previously saved or deployed data remains in use and the error is
 reported. Custom source URLs are unavailable in this deployment. The local development server
 also checks in the background, subject to its existing 10-minute NASA-check cooldown.
 

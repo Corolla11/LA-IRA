@@ -190,6 +190,26 @@ test('live loader falls back to the packaged snapshot when NASA is unavailable',
   } finally { globalThis.fetch = oldFetch; console.warn = warn; }
 });
 
+test('live Moon loader retains the packaged radiation reference without querying RAD', async () => {
+  const bytes = new Uint8Array(16), oldFetch = globalThis.fetch, requested = [];
+  const meta = { ...liveMeta(), body: { name: 'Moon', radius: 1737400 }, layers: {},
+    radiation: { rate: 5.1, lat: 0.4, lng: 0.4 } };
+  globalThis.fetch = async url => {
+    requested.push(url);
+    if (url === 'data/meta.json') return { ok: true, json: async () => meta };
+    if (url.startsWith('/api/layer?body=moon&name=elevation')) {
+      return { ok: true, arrayBuffer: async () => bytes.buffer };
+    }
+    throw new Error('Unexpected request: ' + url);
+  };
+  try {
+    const data = await loadData('data/', { elevation: true }, 'moon');
+    assert.deepEqual(data.meta.radiation, { rate: 5.1, lat: 0.4, lng: 0.4 });
+    assert.deepEqual(data.fallbacks, []);
+    assert.ok(!requested.some(url => url.startsWith('/api/radiation')));
+  } finally { globalThis.fetch = oldFetch; }
+});
+
 test('declared thermal and radiation data enable their models', () => {
   const N = 250, meta = {
     N, body: { name: 'Mars', radius: 3396190 },

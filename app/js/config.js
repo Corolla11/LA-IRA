@@ -8,6 +8,7 @@ export const DJ = [0, 1, 1, 1, 0, -1, -1, -1];
 export const TOBLER_MAX = Math.exp(0.175);   // maximum speed ratio (descent of ~3°)
 export const MAX_STOPS = 6;
 export const RM = 250;                       // side of the radiation grid
+export const LIVE_RADIATION_BODY = 'mars';   // Curiosity RAD is the only live radiation source
 export const DEFAULT_PARAMS = { v0: 1.5, maxSlope: 25, maxCross: 20, sand: 1.5, eva: 6, reserve: 30, work: 20, carry: false, optimize: true, algorithm: 'astar' };
 export const CRISM_LEGEND = {
   hyd: 'Red: polyhydrated sulfate (SINDEX2). Green: monohydrated sulfate (BD2100). Blue: hydration (BD1900).',

@@ -43,7 +43,7 @@ globalThis.indexedDB = {
 };
 
 test('updates retain their hashes after reopening and unchanged files use 304', async () => {
-  const body = 'cache-test-live', old = 'old traverse', changed = 'new traverse';
+  const body = 'mars', old = 'old traverse', changed = 'new traverse';
   const status = { files: { 'traverse.json': { sha256: sha(old), size: old.length } } };
   const calls = [];
   let latest = changed;
@@ -68,6 +68,7 @@ test('updates retain their hashes after reopening and unchanged files use 304', 
     const result = await first;
     assert.equal(result.diffs.length, 1);
     assert.equal(calls.filter(url => url.startsWith('/api/traverse')).length, 1);
+    assert.equal(calls.filter(url => url.startsWith('/api/radiation?body=mars')).length, 1);
     await applyUpdates(body, result.diffs);
 
     cache = await openCachedBody(body, true);
@@ -80,6 +81,25 @@ test('updates retain their hashes after reopening and unchanged files use 304', 
     assert.equal(next.diffs.length, 0);
     assert.equal(records.get(body + '/traverse.json').sha256, sha(changed));
     assert.ok(calls.some(url => url.includes('have=' + sha(changed))));
+  } finally { globalThis.fetch = previous; }
+});
+
+test('live radiation checks run only for Mars and report actual failures', async () => {
+  const previous = globalThis.fetch, calls = [];
+  globalThis.fetch = async url => {
+    calls.push(url);
+    if (url.startsWith('/api/radiation?body=mars')) return new Response(null, { status: 502 });
+    throw new Error('Unexpected request: ' + url);
+  };
+  try {
+    const status = { files: {} };
+    const moon = await checkUpdates('moon', true, status);
+    assert.deepEqual(moon.errors, {});
+    assert.deepEqual(moon.diffs, []);
+    assert.deepEqual(calls, []);
+    const mars = await checkUpdates('mars', true, status);
+    assert.deepEqual(mars.errors, { 'radiation.json': 'HTTP 502' });
+    assert.equal(calls.length, 1);
   } finally { globalThis.fetch = previous; }
 });
 

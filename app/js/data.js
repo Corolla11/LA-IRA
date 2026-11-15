@@ -25,6 +25,8 @@
  *                  NOT loaded here: map.js hands their URLs straight to Leaflet as image overlays over the
  *                  area bounds, so the browser fetches and draws them itself.
  */
+import { LIVE_RADIATION_BODY } from './config.js';
+
 // Resolves once the image has loaded (PNG files are same-origin, so the canvas is not tainted)
 function loadImage(src) {
   return new Promise(function (res, rej) { var im = new Image(); im.onload = function () { res(im); }; im.onerror = function () { rej(new Error('Cannot load image ' + src)); }; im.src = src; });
@@ -153,7 +155,7 @@ export async function loadData(base, selectedLayers, liveBody, resolve, persist)
       if (!Array.isArray(points)) throw new Error('Current traverse response is invalid.');
       return points;
     }, async function () { return (await get(layers.traverse)).json(); }) : null,
-    radiation: liveBody && meta.radiation ? fresh('radiation', async function () {
+    radiation: liveBody === LIVE_RADIATION_BODY && meta.radiation ? fresh('radiation', async function () {
       var current = await fetchLive(endpoint('radiation?body=' + encodeURIComponent(liveBody)));
       if (![current.rate, current.lat, current.lng].every(Number.isFinite) || current.rate <= 0) {
         throw new Error('Current radiation response is invalid.');
