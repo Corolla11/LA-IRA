@@ -1,6 +1,10 @@
-# A-IRA
-Ares - Integrated route assistant
-
+<div align="center">
+  <img width="200" height="200" src="A-IRA.png" alt="A-IRA">
+  <h1>A-IRA
+  <br>
+  Ares - Integrated route assistant
+  </h1>
+</div>
 Ferramenta de planejamento de EVA (caminhada fora do habitat) para um astronauta em Marte, feita para o desafio NASA Space Apps. O protótipo cobre uma área de 2,46 × 2,46 km na região das formações boxwork do Monte Sharp, cratera Gale, explorada pelo Curiosity em 2025.
 
 ## O que o protótipo faz
