@@ -6,7 +6,7 @@
  *         THEMIS and CRISM drawn into canvases and shown as image overlays), route polylines and draggable pins.
  * Used by: main.js (initMap, toggleLayer, render*), ui.js (tok). Uses the global L (Leaflet, loaded in index.html).
  */
-import { DOSE_RATE, RM, CRISM_LEGEND } from './config.js';
+import { RM, CRISM_LEGEND } from './config.js';
 import { llOf } from './terrain.js';
 
 var $ = function (s) { return document.querySelector(s); };
@@ -43,30 +43,43 @@ function colorizeThemis(tv, S) {
 export function initMap(grid, trav, crism, handlers) {
   var META = grid.meta;
   bounds = L.latLngBounds([META.latS, META.lonW], [META.latN, META.lonE]);
-  crismBounds = L.latLngBounds([META.crism.latS, META.crism.lonW], [META.crism.latN, META.crism.lonE]);
-  map = L.map('map', { crs: L.CRS.EPSG4326, zoomSnap: 0.25, minZoom: 12, maxZoom: 17, maxBounds: bounds.pad(0.4), maxBoundsViscosity: 0.8 });
+  if (META.crism) crismBounds = L.latLngBounds([META.crism.latS, META.crism.lonW], [META.crism.latN, META.crism.lonE]);
+  map = L.map('map', { crs: L.CRS.EPSG4326, zoomSnap: 0.25, minZoom: 0, maxZoom: 20, maxBounds: bounds.pad(0.4), maxBoundsViscosity: 0.8 });
   map.attributionControl.setPrefix(false);
-  map.attributionControl.addAttribution('NASA/JPL-Caltech/UArizona/JHUAPL/ASU · NASA Mars Trek, PDS · Leaflet');
+  map.attributionControl.addAttribution(META.example === 'gale' ? 'NASA/JPL-Caltech/UArizona/JHUAPL/ASU · NASA Mars Trek, PDS · Leaflet' : 'Leaflet');
   map.fitBounds(bounds);
   requestAnimationFrame(function () { map.invalidateSize(); map.fitBounds(bounds); });
   map.createPane('ovl').style.zIndex = 410;
   map.createPane('routes').style.zIndex = 450;
 
-  layers.hirise = L.imageOverlay('data/hirise.jpg', bounds).addTo(map);
-  layers.hill = L.imageOverlay('data/hillshade.jpg', bounds, { opacity: 0.5, pane: 'ovl' });
+  var available = META.layers || {};
+  if (available.image) layers.hirise = L.imageOverlay('data/' + available.image, bounds).addTo(map);
+  else {
+    var cv = document.createElement('canvas'); cv.width = grid.N; cv.height = grid.N;
+    var cx = cv.getContext('2d'), pixels = cx.createImageData(grid.N, grid.N), min = Infinity, max = -Infinity;
+    grid.ELEV.forEach(function (z) { min = Math.min(min, z); max = Math.max(max, z); });
+    grid.ELEV.forEach(function (z, i) { var v = 40 + 190 * (z - min) / (max - min || 1); pixels.data[i * 4] = v; pixels.data[i * 4 + 1] = v; pixels.data[i * 4 + 2] = v; pixels.data[i * 4 + 3] = 255; });
+    cx.putImageData(pixels, 0, 0);
+    layers.hirise = L.imageOverlay(cv.toDataURL(), bounds).addTo(map);
+  }
+  if (available.hillshade) layers.hill = L.imageOverlay('data/' + available.hillshade, bounds, { opacity: 0.5, pane: 'ovl' });
   layers.slope = null; layers.ret = null; layers.crism = null; layers.rad = null; layers.themis = null;
   layers.route = L.layerGroup().addTo(map);
 
-  canvasOverlay(colorizeThemis(grid.TV, META.themisSize), 'themis', '#lThemis', 0.65, bounds);
-  renderRadiation(grid);
-  renderCrism(crism);
+  if (grid.TV) canvasOverlay(colorizeThemis(grid.TV, META.themisSize), 'themis', '#lThemis', 0.65, bounds);
+  if (grid.DOSE) renderRadiation(grid);
+  if (crism.hyd) renderCrism(crism);
+  [['#lHill', !!available.hillshade], ['#lThemis', !!grid.TV], ['#lRad', !!grid.DOSE], ['#lCrism', !!crism.hyd], ['#lTrav', !!available.traverse]]
+    .forEach(function (pair) { $(pair[0]).disabled = !pair[1]; if (!pair[1]) $(pair[0]).checked = false; });
+  $('#crismSel').disabled = !crism.hyd;
+  $('#pSand').disabled = !grid.SAND;
 
   var tl = trav.map(function (p) { return [p[1], p[2]]; });
   layers.trav = L.layerGroup([
     L.polyline(tl, { pane: 'routes', color: tok('--traverse'), weight: 2.5, dashArray: '6 5', opacity: 0.95 })
   ].concat(trav.map(function (p) {
     return L.circleMarker([p[1], p[2]], { pane: 'routes', radius: 3, color: tok('--traverse'), weight: 1, fillOpacity: 0.9 })
-      .bindTooltip('Curiosity · sol ' + p[0], { direction: 'top' });
+      .bindTooltip((META.example === 'gale' ? 'Curiosity' : 'Traverse') + ' · sol ' + p[0], { direction: 'top' });
   }))).addTo(map);
 
   map.on('mousemove', function (e) { handlers.onMove(e.latlng); });
@@ -113,9 +126,10 @@ function renderRadiation(grid) {
   var cv = document.createElement('canvas'); cv.width = RM; cv.height = RM;
   var cx = cv.getContext('2d'), img = cx.createImageData(RM, RM), d = img.data;
   var lo = tok('--rad-low').split(',').map(Number), hi = tok('--rad-high').split(',').map(Number);
-  var span = Math.max(doseMax - DOSE_RATE, DOSE_RATE - doseMin) || 1;
+  var reference = grid.meta.radiation.rate;
+  var span = Math.max(doseMax - reference, reference - doseMin) || 1;
   for (var q = 0; q < RM * RM; q++) {
-    var t = (DOSE[q] - DOSE_RATE) / span, col = t < 0 ? lo : hi, a = Math.min(1, Math.abs(t)), o = q * 4;
+    var t = (DOSE[q] - reference) / span, col = t < 0 ? lo : hi, a = Math.min(1, Math.abs(t)), o = q * 4;
     d[o] = 244 + (col[0] - 244) * a; d[o + 1] = 244 + (col[1] - 244) * a; d[o + 2] = 244 + (col[2] - 244) * a; d[o + 3] = 70 + 140 * a;
   }
   cx.putImageData(img, 0, 0);

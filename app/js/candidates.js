@@ -33,6 +33,7 @@ export function crismCandidates(grid, crism, channel) {
 // Ordered list of suggested points: fixed targets, then the 8 strongest sulfate signals
 // of each type, from nearest to farthest from the default habitat
 export function buildCandidates(grid, crism) {
+  if (grid.meta.example !== 'gale') return [];
   var hab = pxToLL(grid, HAB_PX[0], HAB_PX[1]), cos = Math.cos(hab.lat * Math.PI / 180);
   function dist(p) { return Math.hypot((p.lat - hab.lat), (p.lng - hab.lng) * cos); }
   var CANDS = [
@@ -40,7 +41,7 @@ export function buildCandidates(grid, crism) {
     { key: 'msl4670', name: 'Curiosity point, sol 4670', src: 'Curiosity / RAD', lat: RAD_POINT.lat, lng: RAD_POINT.lng },
     Object.assign({ key: 'mesa', name: 'Edge of the pale mesa (layers)', src: 'HiRISE' }, pxToLL(grid, 1682, 2358))
   ];
-  var cr = crismCandidates(grid, crism, 0).map(function (c) { return { kind: 'poly', c: c }; })
+  var cr = !crism.hyd ? [] : crismCandidates(grid, crism, 0).map(function (c) { return { kind: 'poly', c: c }; })
     .concat(crismCandidates(grid, crism, 1).map(function (c) { return { kind: 'mono', c: c }; }));
   cr.sort(function (a, b) { return dist(a.c) - dist(b.c); });
   var cnt = { poly: 0, mono: 0 }, seen = [];

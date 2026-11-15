@@ -25,6 +25,11 @@ EVA (extravehicular walk) planning tool for an astronaut on Mars, built for the 
 - 1 to 6 points of interest, suggested from HiRISE, Curiosity and the strongest CRISM sulfate signals.
 - Works offline once loaded (data and Leaflet are local).
 
+Routing can use A*, Dijkstra or D* Lite. D* Lite currently starts a fresh
+backward search for each leg; it does not yet reuse search state for dynamic
+terrain updates. Dijkstra and D* Lite can take considerably longer than A*
+on the full grid.
+
 ## Requirements
 
 Python 3.12 and [uv](https://docs.astral.sh/uv/). No Node, no bundler.
@@ -37,7 +42,59 @@ uv run tools/prepare_data.py --out app/data   # downloads and crops the NASA dat
 uv run tools/serve.py                         # http://localhost:8765/
 ```
 
-Open http://localhost:8765/app/. Opening `index.html` from disk does not work (the app fetches data and ES modules). `tools/serve.py` is used instead of `python -m http.server` because Windows may serve `.js` as `text/plain`.
+Open http://localhost:8765/; it redirects to `/app/`. Opening `index.html` from disk does not work (the app fetches data and ES modules). `tools/serve.py` is used instead of `python -m http.server` because Windows may serve `.js` as `text/plain`.
+
+## Bring your own terrain
+
+The NASA downloader is specific to the Gale crater example; it is not a
+generic planetary data downloader. To use another body, supply a prepared
+package in `app/data/` containing:
+
+- `meta.json`, with the schema below. `body.radius` is the spherical radius
+  in metres; longitude and latitude are degrees in an equirectangular grid.
+  The map cannot cross the antimeridian. The radius is used for distances.
+- `elev.txt`, containing exactly `N * N` finite little-endian float32
+  elevations in metres, encoded as base64. Rows go north to south, columns
+  west to east. The grid must be square and have no missing cells.
+
+For example:
+
+```json
+{
+  "schema": 1,
+  "name": "Example area",
+  "body": {"name": "Moon", "radius": 1737400},
+  "N": 100,
+  "lonW": 10.0, "lonE": 10.1, "latS": 0.0, "latN": 0.1
+}
+```
+
+With only elevation, the map uses a grayscale elevation image. Place the
+habitat and stops on the map. Sand classification and radiation dose are
+shown as unavailable, not zero. The walking model and limits remain user
+assumptions, not validated predictions for the selected body.
+
+Optional `layers` entries reference files relative to `app/data/`: `image`
+and `hillshade` are images covering the grid bounds; `thermal` is a square
+THEMIS-style night-thermal image and requires the `themisSize` pixel width.
+Thermal classification is a regional heuristic, not a measured sand map.
+`traverse` is a JSON array of `[sol, lat, lon]`. The optional `crism` object
+must contain `hyd`, `phy`, `car`, and `tru` image filenames and requires
+`crism` bounds (`lonW`, `lonE`, `latS`, `latN`) in the metadata. These
+products and their legends are CRISM-specific, not a general spectral
+interpreter. Do not supply unrelated spectral images under those names.
+
+Optional `radiation` contains `rate` in µGy/h and reference `lat` and `lng`
+inside the area. It enables the existing sky-view estimate; it is not a
+general radiation model. This estimate currently requires `N` to be a
+multiple of 250. More data does not automatically make the model more
+accurate: input provenance, calibration, registration and model validity
+must be checked for each body.
+
+The old generated `meta.json` has no schema or body radius. Regenerate it
+with `uv run tools/prepare_data.py --out app/data` before using this version;
+an existing package without schema 1 is rejected rather than silently
+interpreted as Mars.
 
 ## Publish as an artifact
 
@@ -53,7 +110,7 @@ Writes `dist/artifact/` (`index.html` without the document wrapper, the other fi
 NASA services ──► tools/prepare_data.py ──► app/data/ ──► app/js/data.js ──► terrain.js / route.js / candidates.js ──► map.js / ui.js
 ```
 
-1. **Fetch** (`tools/prepare_data.py`, ~1 min, needs internet). Each step downloads one product for the map area (lat -4.8285 to -4.7873, lon 137.3593 to 137.4005):
+1. **Fetch** (`tools/prepare_data.py`, ~1 min, needs internet; shared geometry is in `tools/geometry.py`). Each step downloads one product for the map area (lat -4.8285 to -4.7873, lon 137.3593 to 137.4005):
    - **Elevation:** one `exportImage` call to the Mars Trek ImageServer `Gale_DEM_SMG_1m`, returning 1000 x 1000 raw little-endian float32 values (metres, bilinear resampling to ~2.46 m) followed by a 1-bit mask, which is dropped. The bbox in the URL is formatted exactly as the original PowerShell did (`ps_num()`), so the result is byte-identical.
    - **HiRISE:** 15 x 15 WMTS tiles at zoom 16, pasted into one 3840 x 3840 mosaic.
    - **Hillshade:** same ImageServer with the `Hillshade` raster function, 2000 x 2000.
@@ -66,6 +123,13 @@ NASA services ──► tools/prepare_data.py ──► app/data/ ──► app/
 5. **Show** (`map.js`, `ui.js`, `main.js`): Leaflet layers, route, timeline and tables.
 
 Every source file has comments explaining its step in detail. Generated data (`app/data/`, `dist/`) is not versioned: run `tools/prepare_data.py` to create it.
+
+The routing cost model is separated into `cost-model.js`; the reusable search
+workspace is in `grid-workspace.js` and D* Lite is in `dstar-lite.js`.
+`route.js` orchestrates leg searches, stop ordering and the timeline.
+
+Focused checks: `node --experimental-default-type=module --test checks/routing.test.js`
+and `python -m unittest discover -s checks -p test_artifact.py`.
 
 ## Data
 

@@ -1,6 +1,6 @@
 """Static server for the repo root on http://localhost:8765/ (forces .js to text/javascript).
 
-Usage: uv run tools/serve.py [PORT]   then open http://localhost:8765/app/
+Usage: uv run tools/serve.py [PORT]   then open http://localhost:8765/
 Needed because opening app/index.html from disk cannot fetch data files or load ES modules.
 Serving the repo root (not app/) also lets tests/route.test.html reach ../app/js.
 """
@@ -8,6 +8,7 @@ import functools
 import sys
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -15,6 +16,16 @@ ROOT = Path(__file__).resolve().parent.parent
 class Handler(SimpleHTTPRequestHandler):
     # Windows may map .js to text/plain via the registry, and browsers refuse ES modules with that type.
     extensions_map = {**SimpleHTTPRequestHandler.extensions_map, ".js": "text/javascript"}
+
+    def send_head(self):
+        url = urlsplit(self.path)
+        if url.path == "/":
+            location = "/app/" + ("?" + url.query if url.query else "")
+            self.send_response(302)
+            self.send_header("Location", location)
+            self.end_headers()
+            return None
+        return super().send_head()
 
 
 if __name__ == "__main__":

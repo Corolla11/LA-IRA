@@ -11,7 +11,7 @@ export const TOBLER_MAX = Math.exp(0.175);   // maximum speed ratio (descent of 
 export const MAX_STOPS = 6;
 export const RM = 250;                       // side of the radiation grid
 export const HAB_PX = [2290, 2880];          // default habitat, HiRISE mosaic pixel
-export const DEFAULT_PARAMS = { v0: 1.5, maxSlope: 25, maxCross: 20, sand: 1.5, eva: 6, reserve: 30, work: 20, carry: false, optimize: true };
+export const DEFAULT_PARAMS = { v0: 1.5, maxSlope: 25, maxCross: 20, sand: 1.5, eva: 6, reserve: 30, work: 20, carry: false, optimize: true, algorithm: 'astar' };
 export const CRISM_LEGEND = {
   hyd: 'Red: polyhydrated sulfate (SINDEX2). Green: monohydrated sulfate (BD2100). Blue: hydration (BD1900).',
   phy: 'Red: Fe/Mg clays (D2300). Green: Al clays or hydrated silica (D2200). Blue: hydration (BD1900R2).',

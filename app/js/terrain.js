@@ -7,10 +7,11 @@
  * Used by: main.js, candidates.js, route.js, map.js, ui.js. Also exports cell <-> lat/lon helpers.
  * Cell index c = row*N + col; row 0 is the north edge, col 0 the west edge.
  */
-import { M_PER_DEG, RM, DOSE_RATE, RAD_POINT } from './config.js';
+import { RM } from './config.js';
 
 // lat/lon -> cell index (row*N + col), or -1 outside the area. The grid is linear in lat/lon.
 export function cellOf(grid, lat, lng) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return -1;
   var META = grid.meta, N = grid.N;
   var i = Math.floor((lng - META.lonW) / (META.lonE - META.lonW) * N);
   var j = Math.floor((META.latN - lat) / (META.latN - META.latS) * N);
@@ -28,7 +29,7 @@ export function pxToLL(grid, X, Y) { // HiRISE mosaic pixel, 3840x3840
 }
 // Dose of a cell: the radiation grid is coarser (RM x RM), so index it with the reduction factor RF = N/RM
 export function doseAt(grid, c) {
-  if (c < 0) return DOSE_RATE;
+  if (c < 0 || !grid.DOSE) return null;
   var N = grid.N, RF = grid.RF, i = (c % N / RF) | 0, j = (((c / N) | 0) / RF) | 0;
   return grid.DOSE[j * RM + i];
 }
@@ -36,6 +37,7 @@ export function doseAt(grid, c) {
 // raw = { meta, elev (Float32Array), themis (ImageData) }
 export function buildTerrain(raw) {
   var META = raw.meta, ELEV = raw.elev, N = META.N, RF = N / RM;
+  var M_PER_DEG = Math.PI * META.body.radius / 180;
   var latC = (META.latN + META.latS) / 2 * Math.PI / 180;
   var dxm = (META.lonE - META.lonW) / N * M_PER_DEG * Math.cos(latC);
   var dym = (META.latN - META.latS) / N * M_PER_DEG;
@@ -59,7 +61,9 @@ export function buildTerrain(raw) {
   // Thermal: night THEMIS (~30x30 px, ~100 m) resampled to the NxN grid with bilinear interpolation.
   // Cold at night = low thermal inertia = sand/dust, so sand = coldest 30%. The threshold is taken from a
   // sparse sample (every 97th cell) to avoid sorting a million values.
-  var S = META.themisSize, px = raw.themis.data, TV = new Float32Array(S * S);
+  var S = META.themisSize, px = raw.themis && raw.themis.data, TV = null, SAND = null;
+  if (px) {
+  TV = new Float32Array(S * S);
   for (var q = 0; q < S * S; q++) TV[q] = (px[q * 4] + px[q * 4 + 1] + px[q * 4 + 2]) / 3;
   var TH = new Float32Array(N * N);
   for (j = 0; j < N; j++) {
@@ -73,11 +77,18 @@ export function buildTerrain(raw) {
   var sample = []; for (q = 0; q < N * N; q += 97) sample.push(TH[q]);
   sample.sort(function (x, y) { return x - y; });
   var thr = sample[Math.floor(sample.length * 0.3)];
-  var SAND = new Uint8Array(N * N); for (q = 0; q < N * N; q++) SAND[q] = TH[q] < thr ? 1 : 0;
+  SAND = new Uint8Array(N * N); for (q = 0; q < N * N; q++) SAND[q] = TH[q] < thr ? 1 : 0;
+  }
 
   var grid = { meta: META, N: N, RF: RF, ELEV: ELEV, SLOPE: SLOPE, GX: GX, GY: GY, SAND: SAND, TV: TV, dxm: dxm, dym: dym, ddiag: ddiag };
-  var r = computeRadiation(grid);
-  grid.DOSE = r.DOSE; grid.doseMin = r.doseMin; grid.doseMax = r.doseMax;
+  if (META.radiation) {
+    if (N < RM || N % RM || !Number.isFinite(META.radiation.rate) || META.radiation.rate <= 0 ||
+        cellOf(grid, META.radiation.lat, META.radiation.lng) < 0) {
+      throw new Error('Radiation requires a positive rate, an in-bounds reference and a grid divisible by 250.');
+    }
+    var r = computeRadiation(grid);
+    grid.DOSE = r.DOSE; grid.doseMin = r.doseMin; grid.doseMax = r.doseMax;
+  }
   return grid;
 }
 
@@ -107,8 +118,9 @@ function computeRadiation(grid) {
     }
     SVF[J * RM + I] = acc / ND;
   }
-  var rc = cellOf(grid, RAD_POINT.lat, RAD_POINT.lng), ref = SVF[(((rc / N) | 0) / RF | 0) * RM + ((rc % N) / RF | 0)];
+  var radiation = grid.meta.radiation;
+  var rc = cellOf(grid, radiation.lat, radiation.lng), ref = SVF[(((rc / N) | 0) / RF | 0) * RM + ((rc % N) / RF | 0)];
   var DOSE = new Float32Array(RM * RM), doseMin = Infinity, doseMax = -Infinity;
-  for (var q = 0; q < RM * RM; q++) { DOSE[q] = DOSE_RATE * SVF[q] / ref; if (DOSE[q] < doseMin) doseMin = DOSE[q]; if (DOSE[q] > doseMax) doseMax = DOSE[q]; }
+  for (var q = 0; q < RM * RM; q++) { DOSE[q] = radiation.rate * SVF[q] / ref; if (DOSE[q] < doseMin) doseMin = DOSE[q]; if (DOSE[q] > doseMax) doseMax = DOSE[q]; }
   return { DOSE: DOSE, doseMin: doseMin, doseMax: doseMax };
 }
