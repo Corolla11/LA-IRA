@@ -1,6 +1,6 @@
 <div align="center">
   <img width="200" height="200" src="A-IRA.png" alt="A-IRA">
-  <h1>A-IRA
+  <h1>LA-IRA
   <br>
   Ares - Integrated route assistant
   </h1>
