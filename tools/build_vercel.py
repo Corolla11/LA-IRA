@@ -117,7 +117,10 @@ def build(app: Path = ROOT / "app", out: Path = ROOT / "dist" / "vercel") -> lis
     for body_id in body_ids:
         data = app / "data" / body_id
         if not data.exists():
-            continue
+            raise ValueError(
+                f"{data} is missing; prepare it with "
+                f"tools/prepare_data.py --body {body_id}"
+            )
         layers = _package_layers(data)
         if not layers["elevation"]:
             continue
