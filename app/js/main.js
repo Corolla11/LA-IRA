@@ -1,8 +1,7 @@
 /*
  * main.js - entry point (loaded as a module by index.html). Owns the app state and wires everything together.
  *
- * Flow: runGate (sources.js: body + manifest) -> start(body, manifest): loadData -> buildTerrain -> buildCandidates
- * -> initMap -> bindParams -> plan(). body = app/bodies/<id>.json, manifest = app/data/<id>/manifest.json.
+ * Flow: runGate (sources.js: body + layers) -> start(body, manifest) -> loadData -> buildTerrain -> buildCandidates -> initMap -> bindParams -> plan().
  * plan() runs A* (route.js) only when geometry or limits change; EVA duration, reserve and stop time
  * only call refresh() (schedule), without rerunning A*.
  */
@@ -13,9 +12,9 @@ import { buildTerrain, cellOf, doseAt } from './terrain.js';
 import { planRoute, returnMap, nextFrame } from './route.js';
 import { buildCandidates } from './candidates.js';
 import { initMap, setCursor, toggleLayer, renderSlope, renderReturn, renderCrism, renderRoute } from './map.js';
-import { $, nf, fmtMin, setStatus, setRadRange, setRadRef, setSolRange, applyLayerUI, setModeUI, refreshTimes, renderSegments, drawProfile, bindParams } from './ui.js';
+import { $, nf, fmtMin, setStatus, setRadRange, setSolRange, setModeUI, applyLayerUI, refreshTimes, renderSegments, drawProfile, bindParams } from './ui.js';
 
-var grid, raw, body, CANDS = [], cache = { sig: '', map: new Map() };
+var body, grid, raw, CANDS = [], cache = { sig: '', map: new Map() };
 var runToken = 0, lastPlan = null, retMap = null, retKey = '';
 var state = { habitat: null, stops: [], mode: null, p: Object.assign({}, DEFAULT_PARAMS) };
 
@@ -37,14 +36,15 @@ function onDrag(pi, ll) {
 // Only runs when geometry or limits change; a new call cancels the previous one
 async function plan() {
   var token = ++runToken;
+  try {
   setStatus('Calculating route…', 'info');
   $('#feasible').className = 'pill info'; $('#feasible').textContent = 'Calculating…';
   var P = await planRoute(grid, [state.habitat].concat(state.stops), state.p, cache, function (n) {
-    setStatus('A*: segment ' + n, 'info'); return token === runToken;
+    setStatus($('#pAlgorithm').selectedOptions[0].textContent + ': segment ' + n, 'info'); return token === runToken;
   });
   if (!P || token !== runToken) return;
   lastPlan = P;
-  $('#astarInfo').textContent = 'A*: ' + P.runsNew + ' segment(s) computed now (' + nf(P.expandedNew) + ' cells expanded), ' + P.runsCached + ' reused from cache.';
+  $('#astarInfo').textContent = $('#pAlgorithm').selectedOptions[0].textContent + ': ' + P.runsNew + ' segment(s) computed now (' + nf(P.expandedNew) + ' cells expanded), ' + P.runsCached + ' reused from cache.';
   renderSlope(grid, P.eff);
   drawRoute();
   renderSegments(P);
@@ -64,13 +64,21 @@ async function plan() {
   }
   refresh();
   setStatus('Route calculated', 'ok');
+  } catch (err) {
+    if (token !== runToken) return;
+    console.error(err);
+    setStatus('Route calculation failed', 'bad');
+    $('#readout').textContent = 'Route calculation failed: ' + err.message;
+  }
 }
 
 function setMode(m) {
   state.mode = m; setModeUI(m); setCursor(m ? 'crosshair' : '');
 }
 function defaults() {
-  state.habitat = { name: 'Habitat', lat: body.habitat.lat, lng: body.habitat.lng };
+  var pos = body.habitat ? { lat: body.habitat.lat, lng: body.habitat.lng } :
+    { lat: (grid.meta.latN + grid.meta.latS) / 2, lng: (grid.meta.lonW + grid.meta.lonE) / 2 };
+  state.habitat = Object.assign({ name: 'Habitat' }, pos);
   state.stops = CANDS.slice(0, 4).map(function (c) { return Object.assign({}, c, { work: state.p.work }); });
 }
 
@@ -78,7 +86,8 @@ function onMove(ll) {
   var c = cellOf(grid, ll.lat, ll.lng);
   if (c < 0) return;
   var txt = ll.lat.toFixed(5) + ', ' + ll.lng.toFixed(5) + ' · elev ' + nf(grid.ELEV[c]) + ' m · slope ' + nf(grid.SLOPE[c], 1) + '°' +
-    (grid.TV ? (grid.SAND[c] ? ' · sand' : ' · rock') : '') + ' · dose ~' + nf(doseAt(grid, c), 2) + ' µGy/h';
+    (grid.SAND ? (grid.SAND[c] ? ' · estimated sand' : ' · not classified as sand') : ' · terrain type unavailable') +
+    (grid.DOSE ? ' · dose ~' + nf(doseAt(grid, c), 2) + ' µGy/h' : ' · dose unavailable');
   if (retMap && isFinite(retMap.T[c])) txt += ' · return ' + fmtMin(retMap.T[c]);
   $('#readout').textContent = txt;
 }
@@ -99,33 +108,37 @@ function onClick(ll) {
 window.evaDebug = function () {
   if (!lastPlan) return null;
   return {
-    points: lastPlan.pts.map(function (p, i) { var c = lastPlan.cells[i]; return { name: p.name, minutes: p.work, slope: c >= 0 ? +grid.SLOPE[c].toFixed(1) : null, dose: c >= 0 ? +doseAt(grid, c).toFixed(2) : null }; }),
+    points: lastPlan.pts.map(function (p, i) { var c = lastPlan.cells[i], dose = doseAt(grid, c); return { name: p.name, minutes: p.work, slope: c >= 0 ? +grid.SLOPE[c].toFixed(1) : null, dose: dose === null ? null : +dose.toFixed(2) }; }),
     candidates: CANDS.map(function (c) { return c.name + ' (' + c.lat.toFixed(4) + ', ' + c.lng.toFixed(4) + ')'; }),
     dose_min_max: [grid.doseMin, grid.doseMax],
     matrix_min: lastPlan.M.map(function (row) { return row.map(function (r) { return r ? (isFinite(r.time) ? Math.round(r.time / 60) : 'X') : '-'; }); })
   };
 };
 
+// body = profile from app/bodies/<id>.json, manifest = layers the user picked (written by /api/prepare;
+// the same selection is in data/<id>/meta.json "layers", which is what loadData reads)
 async function start(bodyProfile, manifest) {
   body = bodyProfile;
   state.p.v0 = body.v0 || DEFAULT_PARAMS.v0;
   try {
-    raw = await loadData('data/' + body.id + '/', manifest);
-    grid = buildTerrain(raw, body);
+    raw = await loadData('data/' + body.id + '/');
+    grid = buildTerrain(raw);
   } catch (err) {
     setStatus('Error loading data', 'bad');
-    $('#readout').textContent = 'Could not load the data/ folder. Open the page through a server, not directly from the file.';
+    console.error(err);
+    $('#readout').textContent = 'Could not load data: ' + err.message;
     return;
   }
-  setRadRange(grid.doseMin, grid.doseMax);
-  setRadRef(grid.doseRate);
-  setSolRange(raw.trav);
-  applyLayerUI(manifest, !!body.doseRate);
-  if (body.subtitle) $('#subtitle').textContent = body.subtitle;
+  if (grid.DOSE) { setRadRange(grid.doseMin, grid.doseMax); $('#radRef').textContent = nf(grid.meta.radiation.rate, 2) + ' reference'; }
+  else $('#radRef').textContent = 'unavailable';
+  $('#subtitle').textContent = body.subtitle || ((grid.meta.name || 'Exploration area') + ' · ' + grid.meta.body.name);
   if (body.notes) $('#sourceNotes').replaceChildren.apply($('#sourceNotes'), body.notes.map(function (t) { var li = document.createElement('li'); li.textContent = t; return li; }));
-  $('#pV0').value = state.p.v0;
+  $('#pV0').value = state.p.v0; $('#pV0').dispatchEvent(new Event('input'));
+  setSolRange(raw.trav);
   CANDS = buildCandidates(grid, raw.crism, body);
-  initMap(grid, raw.trav, raw.crism, { onMove: onMove, onClick: onClick }, body, manifest);
+  if (!CANDS.length) $('#candidateNote').textContent = 'Mark points on the map. No suggested points were supplied.';
+  initMap(grid, raw.trav, raw.crism, { onMove: onMove, onClick: onClick }, 'data/' + body.id + '/');
+  applyLayerUI(manifest, !!grid.DOSE);
   defaults();
   bindParams(state.p, {
     replan: plan, refresh: refresh,
@@ -147,5 +160,4 @@ async function start(bodyProfile, manifest) {
   });
   plan();
 }
-// The gate (sources.js) lets the user pick a body and its layers, then calls start(body, manifest).
 runGate(start);

@@ -1,9 +1,9 @@
 /*
  * candidates.js - suggested points of interest. DOM-free.
  *
- * Input : grid (terrain.js), crism = { hyd, ... } ImageData from data.js (or null) and the body profile
- *         (habitat, targets).
- * Output: buildCandidates(grid, crism, body) -> ordered list [{ key, name, src, lat, lng }] used by the "+" button and the default route.
+ * Input : grid (terrain.js), crism = { hyd, ... } ImageData from data.js ({} when absent) and the body profile
+ *         (app/bodies/<id>.json: habitat and fixed targets).
+ * Output: buildCandidates() -> ordered list [{ key, name, src, lat, lng }] used by the "+" button and the default route.
  * Used by: main.js and tests/route.test.html.
  */
 import { cellOf } from './terrain.js';
@@ -30,14 +30,13 @@ export function crismCandidates(grid, crism, channel) {
   return out;
 }
 
-// Ordered list of suggested points: the profile's fixed targets, then (only with CRISM data) the 8 strongest
-// sulfate signals of each type, from nearest to farthest from the default habitat. May be empty.
+// Ordered list of suggested points: the profile's fixed targets, then (when the CRISM layer is on) the 8
+// strongest sulfate signals of each type, from nearest to farthest from the default habitat. May be empty.
 export function buildCandidates(grid, crism, body) {
   var hab = body.habitat, cos = Math.cos(hab.lat * Math.PI / 180);
   function dist(p) { return Math.hypot((p.lat - hab.lat), (p.lng - hab.lng) * cos); }
-  var CANDS = (body.targets || []).map(function (t) { return { key: t.key, name: t.name, src: t.src, lat: t.lat, lng: t.lng }; });
-  if (!crism) return CANDS;
-  var cr = crismCandidates(grid, crism, 0).map(function (c) { return { kind: 'poly', c: c }; })
+  var CANDS = (body.targets || []).map(function (t) { return Object.assign({}, t); });
+  var cr = !(crism && crism.hyd) ? [] : crismCandidates(grid, crism, 0).map(function (c) { return { kind: 'poly', c: c }; })
     .concat(crismCandidates(grid, crism, 1).map(function (c) { return { kind: 'mono', c: c }; }));
   cr.sort(function (a, b) { return dist(a.c) - dist(b.c); });
   var cnt = { poly: 0, mono: 0 }, seen = [];

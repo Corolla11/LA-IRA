@@ -19,10 +19,10 @@ export function setStatus(t, cls) { var s = $('#status'); s.textContent = t; s.c
 export function setRadRange(min, max) { $('#radMin').textContent = nf(min, 2); $('#radMax').textContent = nf(max, 2); }
 export function setSolRange(trav) {
   var el = $('[data-sol-range]'), sols = trav ? trav.map(function (p) { return p[0]; }) : [];
+  if (!el) return;   // the source notes were replaced by the body profile's notes
   if (sols.length) el.textContent = Math.min.apply(null, sols) + '–' + Math.max.apply(null, sols);
-  var li = el.closest('li'); if (li) li.style.display = trav ? '' : 'none';
+  var li = el.closest('li'); if (li) li.style.display = sols.length ? '' : 'none';
 }
-export function setRadRef(rate) { $('#radRef').textContent = nf(rate, 2) + ' reference'; }
 // Hides the controls of layers absent from the manifest (layers[id] === false) and unchecks them.
 // hasRad = false also hides the radiation layer (body without a dose rate).
 export function applyLayerUI(manifest, hasRad) {
@@ -59,14 +59,14 @@ export function refreshTimes(grid, P, p, retMap, stops, cands, act) {
   var evaS = p.eva * 3600, budget = evaS * (1 - p.reserve / 100);
   var dist = 0, climb = 0, desc = 0, maxSl = 0;
   P.segs.forEach(function (sg) { if (sg.stats) { dist += sg.stats.dist; climb += sg.stats.climb; desc += sg.stats.desc; maxSl = Math.max(maxSl, sg.stats.maxSlope); } });
-  var nStops = P.seq.length - 2, slack = budget - sc.total;
+  var nStops = Math.max(0, P.seq.length - 2), slack = budget - sc.total;
   $('#sTotal').textContent = sc.missing ? '–' : fmtMin(sc.total);
   $('#sBudget').textContent = fmtMin(budget) + ' of ' + nf(p.eva, 1) + ' h';
   var sl = $('#sSlack'); sl.textContent = sc.missing ? '–' : (slack < 0 ? '−' + fmtMin(-slack) : fmtMin(slack)); sl.classList.toggle('neg', slack < 0);
   $('#sDist').textContent = sc.missing ? '–' : nf(dist / 1000, 2) + ' km';
   $('#sClimb').textContent = sc.missing ? '–' : nf(climb) + ' / ' + nf(desc) + ' m';
   $('#sMaxSlope').textContent = sc.missing ? '–' : nf(maxSl, 1) + '°';
-  $('#sDose').textContent = sc.missing ? '–' : nf(sc.dose, 1) + ' µGy';
+  $('#sDose').textContent = sc.missing || sc.dose === null ? 'unavailable' : nf(sc.dose, 1) + ' µGy';
 
   var worst = -1;
   if (retMap) P.segs.forEach(function (sg) { if (sg.res && sg.res.path) sg.res.path.forEach(function (c) { var t = retMap.T[c]; if (isFinite(t) && t > worst) worst = t; }); });
@@ -95,6 +95,7 @@ export function refreshTimes(grid, P, p, retMap, stops, cands, act) {
   else if (sc.total > evaS) { f.className = 'pill bad'; f.textContent = 'Exceeds EVA duration'; }
   else if (sc.total > budget) { f.className = 'pill bad'; f.textContent = 'Uses up the reserve'; }
   else if (nu > 0) { f.className = 'pill warn'; f.textContent = 'Feasible without ' + nu + (nu > 1 ? ' points' : ' point'); }
+  else if (!grid.SAND || !grid.DOSE) { f.className = 'pill warn'; f.textContent = 'Within time budget; data incomplete'; }
   else { f.className = 'pill ok'; f.textContent = 'Feasible'; }
   updateStepper(stops, cands);
 }
@@ -102,7 +103,7 @@ export function refreshTimes(grid, P, p, retMap, stops, cands, act) {
 function renderStops(P, sc, act) {
   var ul = $('#stopList'); ul.innerHTML = '';
   var workEv = {}; sc.events.forEach(function (e) { if (e.type === 'work') workEv[e.pi] = e; });
-  var list = P.seq.slice(0, -1).concat(P.unreach);
+  var list = (P.seq.length === 1 ? P.seq : P.seq.slice(0, -1)).concat(P.unreach);
   list.forEach(function (pi, k) {
     var pt = P.pts[pi], li = document.createElement('li'), bad = P.unreach.indexOf(pi) >= 0;
     if (bad) li.className = 'unreach';
@@ -139,7 +140,7 @@ export function renderSegments(P) {
     if (!st) { tr.innerHTML = '<td>' + name + '</td><td class="bad" colspan="7">No path within limits</td>'; }
     else {
       tr.innerHTML = '<td>' + name + '</td><td>' + nf(st.dist) + '</td><td>' + fmtMin(sg.res.time) + '</td><td>' + nf(st.climb) + ' / ' + nf(st.desc) +
-        '</td><td class="' + (st.maxSlope > 15 ? 'warn' : '') + '">' + nf(st.maxSlope, 1) + '°</td><td>' + nf(st.caution) + '</td><td>' + nf(st.sand) + '</td><td>' + nf(st.dose, 1) + '</td>';
+        '</td><td class="' + (st.maxSlope > 15 ? 'warn' : '') + '">' + nf(st.maxSlope, 1) + '°</td><td>' + nf(st.caution) + '</td><td>' + (st.sand === null ? '–' : nf(st.sand)) + '</td><td>' + (st.dose === null ? '–' : nf(st.dose, 1)) + '</td>';
     }
     tb.appendChild(tr);
   });
@@ -220,6 +221,7 @@ export function bindParams(p, act) {
   });
   $('#pCarry').addEventListener('change', function (e) { p.carry = e.target.checked; act.replan(); });
   $('#pOpt').addEventListener('change', function (e) { p.optimize = e.target.checked; act.replan(); });
+  $('#pAlgorithm').addEventListener('change', function (e) { p.algorithm = e.target.value; act.replan(); });
 
   [['#lHill', 'hill'], ['#lThemis', 'themis'], ['#lTrav', 'trav'], ['#lSlope', 'slope'], ['#lRet', 'ret'], ['#lRad', 'rad'], ['#lCrism', 'crism']].forEach(function (t) {
     $(t[0]).addEventListener('change', function (e) { act.toggleLayer(t[1], e.target.checked); });

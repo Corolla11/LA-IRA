@@ -27,15 +27,15 @@ import argparse
 import base64
 import io
 import json
-import math
 import re
 from concurrent.futures import ThreadPoolExecutor
-from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote
 
 import requests
 from PIL import Image
+from geometry import bbox, bbox_str, crism_crop, ps_6dec, themis_crop, tile_origin
 
 N = 1000  # elevation grid is N x N cells (~2.4 m each over the 2.46 km area); also meta.json "N"
 MAX_SOL = 4670  # reference sol; keep equal to tests/compare_data.py
@@ -43,7 +43,6 @@ MAX_SOL = 4670  # reference sol; keep equal to tests/compare_data.py
 TILES = "https://trek.nasa.gov/tiles/Mars/EQ/"
 # Curiosity waypoints (GeoJSON FeatureCollection; properties sol/lat/lon), grows with every sol
 WAYPOINTS = "https://mars.nasa.gov/mmgis-maps/MSL/Layers/json/MSL_waypoints.json"
-THEMIS_TILE = (9, 269, 902)  # zoom, row, col
 # 1 m Gale DTM (Mars Trek ArcGIS ImageServer); used for elevation (exportImage bsq F32) and hillshade
 IMAGE_SERVER = "https://trek.nasa.gov/mars/trekarcgis/rest/services/Gale_DEM_SMG_1m/ImageServer"
 # CRISM MTRDR browse products of observation FRT0000B6F1 (PDS Geosciences); suffixes: hydj_mtr3.lbl,
@@ -52,82 +51,41 @@ CRISM_BASE = ("https://pds-geosciences.wustl.edu/mro/mro-m-crism-5-rdr-mptargete
               "browse/2008/2008_191/frt0000b6f1/frt0000b6f1_07_br")
 
 
-def tile_origin():
-    """(row0, col0) of the 15x15 zoom-16 tile block centred on tile 34518/115554."""
-    return 34518 - 7, 115554 - 7
-
-
-def bbox():
-    """(lonW, latS, lonE, latN) of the map area.
-    Tile grid: column = floor((lon+180)/360 * 2^(z+1)), row = floor((90-lat)/180 * 2^z); at z=16 one tile
-    spans 180/2^16 degrees both ways, so the 15x15 block edges are exact binary fractions."""
-    d16 = 180 / 2 ** 16
-    row0, col0 = tile_origin()
-    return (col0 * d16 - 180, 90 - (row0 + 15) * d16, (col0 + 15) * d16 - 180, 90 - row0 * d16)
-
-
-def ps_num(v):
-    """Format like Windows PowerShell 5.1: 15 significant digits, ties rounded away from zero
-    (Python's '.15g' rounds ties to even: 137.4005126953125 -> ...312 instead of ...313)."""
-    d = Decimal(v)
-    q = Decimal(1).scaleb(d.adjusted() - 14)
-    return format(d.quantize(q, rounding=ROUND_HALF_UP).normalize(), "f")
-
-
-def bbox_str():
-    """bbox as 'lonW,latS,lonE,latN' for the ImageServer 'bbox' parameter, via ps_num so the request
-    URL (and therefore the returned elevation bytes) matches the original PowerShell pipeline."""
-    return ",".join(ps_num(v) for v in bbox())
-
-
-def themis_crop(lonW, lonE, latN):
-    """(x0, y0, size) in pixels of THEMIS tile 9/269/902 covering the map bbox (expected 182, 158, 30).
-    A zoom-9 tile spans 180/512 degrees over 256 px (px = degrees per pixel, ~0.00137 deg ~ 100 m).
-    Offsets are measured from the tile's west edge (lon = tcol*180/512 - 180) and north edge
-    (lat = 90 - trow*180/512); the crop is square, sized from the longitude span."""
-    _, trow, tcol = THEMIS_TILE
-    px = (180 / 512) / 256
-    x0 = round((lonW + 180 - tcol * (180 / 512)) / px)
-    y0 = round((90 - latN - trow * (180 / 512)) / px)
-    return x0, y0, round((lonE - lonW) / px)
-
-
-def crism_crop(lonW, lonE, latN, latS, res, cW, cN):
-    """(x0, y0, w, h) of the CRISM browse crop (expected w = h = 137).
-    The browse PNGs are equirectangular: res pixels per degree (3293.04), top-left corner at
-    (cW = WESTERNMOST_LONGITUDE, cN = MAXIMUM_LATITUDE). Pixel = (lon - cW)*res, (cN - lat)*res.
-    The crop is floor/ceil-rounded outwards so it fully covers the bbox; build_meta() then records the
-    real (slightly larger) bounds of the crop so the app can place the overlay exactly."""
-    x0 = math.floor((lonW - cW) * res)
-    x1 = math.ceil((lonE - cW) * res)
-    y0 = math.floor((cN - latN) * res)
-    y1 = math.ceil((cN - latS) * res)
-    return x0, y0, x1 - x0, y1 - y0
-
-
-def fetch_crism_label():
+def fetch_crism_label() -> list[float]:
     """Download the PDS label hydj_mtr3.lbl (same map projection for all four browse products) and
     parse three PDS3 keywords with a regex: MAP_RESOLUTION (px/deg), WESTERNMOST_LONGITUDE (deg E),
     MAXIMUM_LATITUDE (deg). Returns [res, cW, cN] as floats."""
     text = requests.get(CRISM_BASE + "hydj_mtr3.lbl", timeout=60).text
-    return [float(re.search(n + r"\s*=\s*([-\d.]+)", text, re.I).group(1))
-            for n in ("MAP_RESOLUTION", "WESTERNMOST_LONGITUDE", "MAXIMUM_LATITUDE")]
+    values: list[float] = []
+    for name in ("MAP_RESOLUTION", "WESTERNMOST_LONGITUDE", "MAXIMUM_LATITUDE"):
+        match = re.search(name + r"\s*=\s*([-\d.]+)", text, re.I)
+        if match is None:
+            raise ValueError(f"CRISM label is missing {name}")
+        values.append(float(match.group(1)))
+    return values
 
 
-def build_meta(res, cW, cN):
+def build_meta(res: float, cW: float, cN: float) -> dict[str, object]:
     """Content of meta.json. Top level: lonW/lonE/latN/latS (map bbox, used by terrain.js and map.js for
     the grid and the HiRISE/hillshade/THEMIS overlays), N (grid size), themisSize (THEMIS crop side in px,
     used by terrain.js). "crism": product name, real crop bounds lonW/lonE/latN/latS and w/h in px
     (used by candidates.js and map.js to georeference the CRISM overlays)."""
     lonW, latS, lonE, latN = bbox()
     x0, y0, w, h = crism_crop(lonW, lonE, latN, latS, res, cW, cN)
-    crism = {"product": "FRT0000B6F1_07 MTRDR", "lonW": cW + x0 / res, "lonE": cW + (x0 + w) / res,
-             "latN": cN - y0 / res, "latS": cN - (y0 + h) / res, "w": w, "h": h}
-    return {"lonW": lonW, "lonE": lonE, "latN": latN, "latS": latS, "N": N,
-            "themisSize": themis_crop(lonW, lonE, latN)[2], "crism": crism}
+    crism: dict[str, str | float | int] = {
+        "product": "FRT0000B6F1_07 MTRDR", "lonW": cW + x0 / res, "lonE": cW + (x0 + w) / res,
+        "latN": cN - y0 / res, "latS": cN - (y0 + h) / res, "w": w, "h": h,
+    }
+    return {"schema": 1, "body": {"name": "Mars", "radius": 3396190}, "name": "Mount Sharp, Gale crater",
+            "lonW": lonW, "lonE": lonE, "latN": latN, "latS": latS, "N": N,
+            "themisSize": themis_crop(lonW, lonE, latN)[2], "crism": crism,
+            "layers": {"image": "hirise.jpg", "hillshade": "hillshade.jpg", "thermal": "themis.png",
+                       "traverse": "traverse.json", "crism": {k: f"crism_{k}.png" for k in ("phy", "hyd", "car", "tru")}},
+            "radiation": {"rate": 6.55, "lat": -4.8082, "lng": 137.3811},
+            "example": "gale"}
 
 
-def step_elev(out):
+def step_elev(out: Path) -> None:
     """elev.txt: elevation of the bbox from the 1 m Gale DTM.
     Source: {IMAGE_SERVER}/exportImage with bbox=<bbox_str()>, bboxSR=104905 (Mars 2000 geographic),
     size=1000,1000, format=bsq, pixelType=F32, interpolation=RSP_BilinearInterpolation, f=image.
@@ -144,22 +102,23 @@ def step_elev(out):
     (out / "elev.txt").write_bytes(base64.b64encode(r.content[:N * N * 4]))  # drop 1-bit mask
 
 
-def step_meta(out):
+def step_meta(out: Path) -> None:
     """meta.json: bbox + CRISM crop bounds (see build_meta). Needs the CRISM label (one HTTP request).
     Format: json.dumps(indent=2) + LF, UTF-8 without BOM. Consumer: app/js/data.js (loaded first), then
     terrain.js, map.js, candidates.js."""
-    meta = build_meta(*fetch_crism_label())
+    res, cW, cN = fetch_crism_label()
+    meta = build_meta(res, cW, cN)
     (out / "meta.json").write_bytes((json.dumps(meta, indent=2) + "\n").encode())
 
 
-def get_image(url):
+def get_image(url: str) -> Image.Image:
     """GET an image URL and open it with Pillow (raises on HTTP errors)."""
     r = requests.get(url, timeout=120)
     r.raise_for_status()
     return Image.open(io.BytesIO(r.content))
 
 
-def step_hirise(out):
+def step_hirise(out: Path) -> None:
     """hirise.jpg: HiRISE image of the area.
     Source: Mars Trek WMTS layer curiosity_hirise_mosaic, zoom 16:
     {TILES}curiosity_hirise_mosaic/1.0.0/default/default028mm/16/<row>/<col>.png
@@ -169,16 +128,19 @@ def step_hirise(out):
     Consumer: app/js/map.js, directly as L.imageOverlay('data/hirise.jpg') over the bbox."""
     row0, col0 = tile_origin()
     url = TILES + "curiosity_hirise_mosaic/1.0.0/default/default028mm/16/{}/{}.png"
-    cells = [(r, c) for r in range(15) for c in range(15)]
+    cells: list[tuple[int, int]] = [(r, c) for r in range(15) for c in range(15)]
+    def load_tile(rc: tuple[int, int]) -> Image.Image:
+        return get_image(url.format(row0 + rc[0], col0 + rc[1])).convert("RGBA")
+
     with ThreadPoolExecutor(8) as ex:
-        tiles = list(ex.map(lambda rc: get_image(url.format(row0 + rc[0], col0 + rc[1])).convert("RGBA"), cells))
+        tiles = list(ex.map(load_tile, cells))
     big = Image.new("RGBA", (3840, 3840), (0, 0, 0, 0))
     for (r, c), t in zip(cells, tiles):
         big.paste(t, (c * 256, r * 256))
     big.convert("RGB").save(out / "hirise.jpg", quality=78)
 
 
-def step_hillshade(out):
+def step_hillshade(out: Path) -> None:
     """hillshade.jpg: shaded relief rendered server-side from the same 1 m DTM.
     Source: {IMAGE_SERVER}/exportImage with bbox=<bbox_str()>, bboxSR=104905, size=2000,2000, format=jpg,
     f=image and renderingRule = URL-encoded JSON {"rasterFunction":"Hillshade","rasterFunctionArguments":
@@ -192,7 +154,7 @@ def step_hillshade(out):
     (out / "hillshade.jpg").write_bytes(r.content)
 
 
-def step_themis(out):
+def step_themis(out: Path) -> None:
     """themis.png: night-time infrared brightness (thermal inertia proxy) over the bbox.
     Source: Mars Trek WMTS layer THEMIS_NightIR_ControlledMosaics_100m_v2_oct2018, single tile
     zoom 9, row 269, col 902 (256x256 px, ~100 m/px). Cropped to x 182..211, y 158..187 (30x30 px, see
@@ -205,13 +167,7 @@ def step_themis(out):
     tile.convert("RGBA").crop((x0, y0, x0 + w, y0 + w)).save(out / "themis.png")
 
 
-def ps_6dec(v):
-    """Like .NET ToString('0.######'): 6 decimals, no trailing zeros."""
-    s = format(Decimal(ps_num(v)).quantize(Decimal("1e-6"), rounding=ROUND_HALF_UP), "f").rstrip("0").rstrip(".")
-    return "0" if s in ("", "-0") else s
-
-
-def step_traverse(out):
+def step_traverse(out: Path) -> None:
     """traverse.json: Curiosity waypoints inside the map.
     Source: WAYPOINTS (MMGIS GeoJSON; each feature has properties sol, lat, lon). Features that are
     malformed are skipped. Kept: sol <= MAX_SOL (the live file keeps growing; 4670 is the reference sol,
@@ -220,9 +176,10 @@ def step_traverse(out):
     ps_6dec (at most 6 decimals, no trailing zeros), UTF-8 without BOM.
     Consumer: app/js/data.js (JSON.parse) -> map.js draws the traverse; ui.js derives the sol range."""
     lonW, latS, lonE, latN = bbox()
-    feats = requests.get(WAYPOINTS, timeout=120).json()["features"]
-    pts = []
-    for p in (f.get("properties") or {} for f in feats):
+    feats: list[dict[str, Any]] = requests.get(WAYPOINTS, timeout=120).json()["features"]
+    pts: list[tuple[int, float, float]] = []
+    for feature in feats:
+        p: Any = feature.get("properties") or {}
         try:  # skip malformed features, as the .ps1 Where-Object did
             pts.append((round(float(p["sol"])), float(p["lat"]), float(p["lon"])))
         except (KeyError, TypeError, ValueError):
@@ -233,7 +190,7 @@ def step_traverse(out):
     (out / "traverse.json").write_bytes(text.encode())
 
 
-def step_crism(out):
+def step_crism(out: Path) -> None:
     """crism_{phy,hyd,car,tru}.png: CRISM MTRDR mineral browse products (phyllosilicates, hydrated
     minerals, carbonates, true colour) of observation FRT0000B6F1_07.
     Source: {CRISM_BASE}{phy|hyd|car|tru}j_mtr3.png (equirectangular) plus the label hydj_mtr3.lbl for
@@ -254,9 +211,10 @@ STEPS = {"elev": step_elev, "meta": step_meta, "hirise": step_hirise, "hillshade
          "themis": step_themis, "traverse": step_traverse, "crism": step_crism}
 
 
-def main():
+def main() -> None:
     """CLI: --out DIR (Mars; created if missing), --only a,b (subset of STEPS, default all, run in order).
-    --body ID prepares every source of app/bodies/<ID>.json into app/data/<ID>/ and writes manifest.json."""
+    --body ID prepares every source of app/bodies/<ID>.json into app/data/<ID>/ and writes manifest.json
+    and a schema 1 meta.json (see tools/adapters.py)."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--out")
     ap.add_argument("--body")
@@ -266,7 +224,7 @@ def main():
         import adapters
         body = adapters.load_body(a.body)
         out = Path(a.out) if a.out else Path(__file__).resolve().parent.parent / "app" / "data" / a.body
-        layers = {}
+        layers: dict[str, bool] = {}
         for src in body["sources"]:
             try:
                 adapters.prepare_source(body, src, out)

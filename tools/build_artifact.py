@@ -18,26 +18,37 @@ def strip_wrapper(html: bytes) -> bytes:
     """Return the bytes between the <body ...> tag (plus its line break) and the last </body>, with
     trailing whitespace replaced by one LF. Note: <title> and <link>/<style> placed in <head> must
     therefore live inside <body> in app/index.html (tests/test_artifact.py expects it to start with <title>)."""
-    start = re.search(rb"<body[^>]*>\r?\n?", html, re.I).end()
+    body = re.search(rb"<body[^>]*>\r?\n?", html, re.I)
+    if body is None:
+        raise ValueError("HTML is missing an opening body tag")
+    start = body.end()
     end = html.rindex(b"</body>")
     return html[start:end].rstrip() + b"\n"
 
 
-# Files that tools/prepare_data.py must have produced in app/data before publishing.
-DATA_FILES = ("elev.txt", "meta.json", "traverse.json", "hirise.jpg", "hillshade.jpg", "themis.png",
-              "crism_phy.png", "crism_hyd.png", "crism_car.png", "crism_tru.png")
-
-
-def build(app: Path = ROOT / "app", out: Path = ROOT / "dist" / "artifact") -> dict:
+def build(app: Path = ROOT / "app", out: Path = ROOT / "dist" / "artifact") -> dict[str, str]:
     """Rebuild `out` from `app` (deleting `out` first); exit with a message if data files are missing.
     Returns the files.json mapping {published path: repo-relative source path}."""
-    missing = [f for f in DATA_FILES if not (app / "data" / "mars" / f).is_file()]
+    # Packages live in app/data/<body>/ (tools/serve.py); the artifact publishes the Mars package, or a
+    # single package placed directly in app/data/.
+    data = app / "data" / "mars" if (app / "data" / "mars" / "meta.json").is_file() else app / "data"
+    meta_path = data / "meta.json"
+    if not meta_path.is_file():
+        sys.exit("app/data/meta.json is missing")
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    if meta.get("schema") != 1:
+        sys.exit("app/data/meta.json must use schema 1")
+    layers = meta.get("layers", {})
+    data_files = ["elev.txt"]
+    data_files.extend(layers[key] for key in ("image", "hillshade", "thermal", "traverse") if key in layers)
+    data_files.extend(layers.get("crism", {}).values())
+    missing = [f for f in data_files if not (data / f).is_file()]
     if missing:
-        sys.exit(f"app/data/mars is missing {', '.join(missing)}: run `uv run tools/prepare_data.py --body mars` first")
+        sys.exit(f"app/data is missing {', '.join(missing)}: run `uv run tools/prepare_data.py --out app/data` first")
     if out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True)
-    files = {}
+    files: dict[str, str] = {}
     for p in sorted(app.rglob("*")):
         if not p.is_file():
             continue

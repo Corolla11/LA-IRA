@@ -1,11 +1,8 @@
 /*
  * data.js - loads every generated file from app/data/ into memory.
  *
- * Input : base URL of the body's data folder ('data/<body>/' for the app, '../app/data/mars/' for tests) and
- *         optionally the manifest.json of that folder ({ layers: { thermal, minerals, traverse, ... }: bool }).
- * Output: loadData(base, manifest) resolves to { meta, elev, trav, themis, crism }; trav, themis and crism are null
- *         when their layer is absent from the manifest (manifest omitted = every layer present).
- *         Only the elevation is required.
+ * Input : base URL of the data folder ('data/' for the app, '../app/data/' for tests).
+ * Output: loadData(base) resolves to { meta, elev, trav, themis, crism }.
  * Used by: main.js (start) and tests/route.test.html. terrain.js turns the result into the grid.
  *
  * Files fetched from app/data (all produced by tools/prepare_data.py, never edited by hand):
@@ -28,7 +25,7 @@
  */
 // Resolves once the image has loaded (PNG files are same-origin, so the canvas is not tainted)
 function loadImage(src) {
-  return new Promise(function (res, rej) { var im = new Image(); im.onload = function () { res(im); }; im.onerror = rej; im.src = src; });
+  return new Promise(function (res, rej) { var im = new Image(); im.onload = function () { res(im); }; im.onerror = function () { rej(new Error('Cannot load image ' + src)); }; im.src = src; });
 }
 // Draws the image on an offscreen canvas and returns its RGBA pixels (Uint8ClampedArray, 4 bytes per pixel)
 export function imageData(im) {
@@ -36,20 +33,45 @@ export function imageData(im) {
   var cx = cv.getContext('2d'); cx.drawImage(im, 0, 0); return cx.getImageData(0, 0, cv.width, cv.height);
 }
 
-export async function loadData(base, manifest) {
-  base = base || 'data/mars/';
-  // Sequential awaits keep the code simple; the files are local and small except elev.txt (~5.3 MB of base64)
-  var meta = await (await fetch(base + 'meta.json')).json();
-  var b64 = await (await fetch(base + 'elev.txt')).text(), bin = atob(b64.trim()), raw = new Uint8Array(bin.length);
-  for (var bi = 0; bi < bin.length; bi++) raw[bi] = bin.charCodeAt(bi);
-  var elev = new Float32Array(raw.buffer);   // N*N floats, meters; length must be N*N
-  function has(id) { return !manifest || !manifest.layers || manifest.layers[id] !== false; }
-  var trav = has('traverse') ? await (await fetch(base + 'traverse.json')).json() : null;
-  var themis = has('thermal') ? imageData(await loadImage(base + 'themis.png')) : null;
-  var crism = null, keys = ['hyd', 'phy', 'car', 'tru'];
-  if (has('minerals')) {
-    crism = {};
-    for (var ki = 0; ki < keys.length; ki++) crism[keys[ki]] = imageData(await loadImage(base + 'crism_' + keys[ki] + '.png'));
+export async function loadData(base) {
+  base = base || 'data/';
+  async function get(name) {
+    var response = await fetch(base + name);
+    if (!response.ok) throw new Error('Cannot load ' + name + ': HTTP ' + response.status);
+    return response;
   }
+  var meta = await (await get('meta.json')).json();
+  if (meta.schema !== 1 || !meta.body || typeof meta.body.name !== 'string' ||
+      !Number.isFinite(meta.body.radius) || meta.body.radius <= 0 ||
+      !Number.isInteger(meta.N) || meta.N < 2 ||
+      ![meta.lonW, meta.lonE, meta.latS, meta.latN].every(Number.isFinite) ||
+      meta.lonW >= meta.lonE || meta.latS >= meta.latN ||
+      meta.latS < -90 || meta.latN > 90 || meta.lonW < -180 || meta.lonE > 180) {
+    throw new Error('Invalid metadata: schema 1, body radius, grid size and geographic bounds are required.');
+  }
+  var b64 = await (await get('elev.txt')).text(), bin = atob(b64.trim()), raw = new Uint8Array(bin.length);
+  if (bin.length !== meta.N * meta.N * 4) throw new Error('Elevation size does not match the grid.');
+  for (var bi = 0; bi < bin.length; bi++) raw[bi] = bin.charCodeAt(bi);
+  var view = new DataView(raw.buffer), elev = new Float32Array(meta.N * meta.N);
+  for (bi = 0; bi < elev.length; bi++) {
+    elev[bi] = view.getFloat32(bi * 4, true);
+    if (!Number.isFinite(elev[bi])) throw new Error('Elevation contains missing or invalid values.');
+  }
+  var layers = meta.layers || {};
+  if (layers.image) await loadImage(base + layers.image);
+  if (layers.hillshade) await loadImage(base + layers.hillshade);
+  var trav = layers.traverse ? await (await get(layers.traverse)).json() : [];
+  var themis = layers.thermal ? imageData(await loadImage(base + layers.thermal)) : null;
+  if (themis && (themis.width !== meta.themisSize || themis.height !== meta.themisSize || meta.themisSize < 2)) {
+    throw new Error('Thermal image dimensions do not match themisSize.');
+  }
+  var crism = {}, keys = Object.keys(layers.crism || {});
+  if (keys.length && (!meta.crism ||
+      ![meta.crism.lonW, meta.crism.lonE, meta.crism.latS, meta.crism.latN].every(Number.isFinite) ||
+      meta.crism.lonW >= meta.crism.lonE || meta.crism.latS >= meta.crism.latN)) throw new Error('Valid CRISM bounds are required.');
+  if (keys.length && !['hyd', 'phy', 'car', 'tru'].every(function (key) { return layers.crism[key]; })) {
+    throw new Error('The CRISM layer requires hyd, phy, car and tru images.');
+  }
+  for (var ki = 0; ki < keys.length; ki++) crism[keys[ki]] = imageData(await loadImage(base + layers.crism[keys[ki]]));
   return { meta: meta, elev: elev, trav: trav, themis: themis, crism: crism };
 }

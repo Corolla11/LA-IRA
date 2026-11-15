@@ -102,6 +102,16 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json(200, sources_report(bid))
         return super().do_GET()
 
+    def send_head(self):
+        # "/" redirects to the app, keeping the query string (GET and HEAD)
+        url = urlparse(self.path)
+        if url.path == "/":
+            self.send_response(302)
+            self.send_header("Location", "/app/" + ("?" + url.query if url.query else ""))
+            self.end_headers()
+            return None
+        return super().send_head()
+
     def do_POST(self):
         if urlparse(self.path).path != "/api/prepare":
             return self.send_json(404, {"error": "not found"})

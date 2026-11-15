@@ -155,4 +155,31 @@ def write_manifest(out, body_id, layers, overrides):
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     (out / "manifest.json").write_text(json.dumps(manifest) + "\n", "utf-8")
+    if (out / "meta.json").is_file():
+        write_meta(out, load_body(body_id), manifest["layers"])
     return manifest
+
+
+# Source id -> entry of meta.json "layers" (schema 1, read by app/js/data.js). elevation is always elev.txt.
+META_LAYERS = {"optical": ("image", "hirise.jpg"), "hillshade": ("hillshade", "hillshade.jpg"),
+               "thermal": ("thermal", "themis.png"), "traverse": ("traverse", "traverse.json"),
+               "minerals": ("crism", {k: f"crism_{k}.png" for k in ("phy", "hyd", "car", "tru")})}
+
+
+def write_meta(out, body, layers):
+    """Rewrite app/data/<body>/meta.json as schema 1 (the package format of app/js/data.js): body name and
+    radius, area name, radiation reference from the profile, and only the layers the user selected
+    (layers[id] true). Area bounds, N, themisSize and crism bounds already in the file are kept."""
+    out = Path(out)
+    meta = json.loads((out / "meta.json").read_text("utf-8"))
+    meta.update({"schema": 1, "name": body.get("subtitle", body["name"]).split(" · ")[0],
+                 "body": {"name": body["name"].split(" · ")[0], "radius": body["radius_m"]},
+                 "layers": {META_LAYERS[i][0]: META_LAYERS[i][1] for i in META_LAYERS if layers.get(i)}})
+    if body.get("doseRate"):
+        meta["radiation"] = {"rate": body["doseRate"], "lat": body["radPoint"]["lat"], "lng": body["radPoint"]["lng"]}
+    else:
+        meta.pop("radiation", None)
+    if body["id"] == "mars":
+        meta["example"] = "gale"
+    (out / "meta.json").write_bytes((json.dumps(meta, indent=2) + "\n").encode())
+    return meta
