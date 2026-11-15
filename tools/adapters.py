@@ -30,7 +30,7 @@ import prepare_data
 BODIES_DIR = ROOT / "app" / "bodies"
 SOURCE_IDS = ("elevation", "optical", "hillshade", "thermal", "minerals", "traverse")
 LAYER_FILES = {"elevation": "elev.txt", "optical": "hirise.jpg", "hillshade": "hillshade.jpg",
-               "thermal": "themis.png", "minerals": "crism_hyd.png", "traverse": "traverse.json"}
+            "thermal": "themis.png", "minerals": "crism_hyd.png", "traverse": "traverse.json"}
 HILLSHADE_RULE = '{"rasterFunction":"Hillshade","rasterFunctionArguments":{"Azimuth":315,"Altitude":45,"ZFactor":1}}'
 
 
@@ -77,6 +77,20 @@ class Manifest(TypedDict):
     body: str
     layers: dict[str, bool]
     overrides: dict[str, str]
+
+
+class FileStatus(TypedDict):
+    sha256: str
+    size: int
+    changedAt: str
+
+
+class Status(TypedDict):
+    body: str
+    lastCheckAt: str | None
+    lastChangeAt: str | None
+    cooldownSeconds: int
+    files: dict[str, FileStatus]
 
 
 def load_body(body_id: str) -> BodyProfile:
@@ -267,15 +281,17 @@ def write_meta(out: Path, body: BodyProfile, layers: Mapping[str, bool]) -> dict
 COOLDOWN_SECONDS = 600
 
 
-def utc_iso(t=None):
+def utc_iso(t: float | None = None) -> str:
     """ISO 8601 UTC with Z, seconds precision."""
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
 
 
-def package_files(out):
+def package_files(out: str | Path) -> list[str]:
     """elev.txt, meta.json and every file listed in meta.json layers (crism expands to its files)."""
     try:
-        layers = json.loads((Path(out) / "meta.json").read_text("utf-8")).get("layers", {})
+        layers: dict[str, str | dict[str, str]] = json.loads(
+            (Path(out) / "meta.json").read_text("utf-8")
+        ).get("layers", {})
     except OSError:  # no meta.json yet (stubbed adapters in tests)
         layers = {}
     names = ["elev.txt", "meta.json"]
@@ -284,24 +300,41 @@ def package_files(out):
     return names
 
 
-def write_status(out, body_id, checked):
+def write_status(out: str | Path, body_id: str, checked: bool) -> Status:
     """Write app/data/<body>/status.json: sha256/size/changedAt per package file (changedAt kept while the
     hash is unchanged), lastChangeAt = max changedAt, lastCheckAt = now if `checked` else previous."""
     out = Path(out)
+    prev: dict[str, Any]
     try:
         prev = json.loads((out / "status.json").read_text("utf-8"))
     except (OSError, ValueError):
         prev = {}
-    now, files = utc_iso(), {}
+    now = utc_iso()
+    files: dict[str, FileStatus] = {}
     for name in package_files(out):
         if not (out / name).is_file():
             continue
         data = (out / name).read_bytes()
-        sha, old = hashlib.sha256(data).hexdigest(), prev.get("files", {}).get(name, {})
-        files[name] = {"sha256": sha, "size": len(data),
-                       "changedAt": old["changedAt"] if old.get("sha256") == sha else now}
-    status = {"body": body_id, "lastCheckAt": now if checked else prev.get("lastCheckAt"),
-              "lastChangeAt": max((f["changedAt"] for f in files.values()), default=None),
-              "cooldownSeconds": COOLDOWN_SECONDS, "files": files}
+        content = data
+        if name == "elev.txt":
+            try:
+                n = json.loads((out / "meta.json").read_text("utf-8"))["N"]
+                decoded = base64.b64decode(data, validate=True)
+                if isinstance(n, int) and not isinstance(n, bool) and len(decoded) == n * n * 4 \
+                        and base64.b64encode(decoded) == data:
+                    content = decoded
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
+        sha = hashlib.sha256(content).hexdigest()
+        old: dict[str, Any] = prev.get("files", {}).get(name, {})
+        files[name] = {"sha256": sha, "size": len(content),
+                        "changedAt": old["changedAt"] if old.get("sha256") == sha else now}
+    status: Status = {
+        "body": body_id,
+        "lastCheckAt": now if checked else prev.get("lastCheckAt"),
+        "lastChangeAt": max((file["changedAt"] for file in files.values()), default=None),
+        "cooldownSeconds": COOLDOWN_SECONDS,
+        "files": files,
+    }
     (out / "status.json").write_text(json.dumps(status, indent=2) + "\n", "utf-8")
     return status

@@ -1,5 +1,5 @@
 <div align="center">
-  <img width="200" height="200" src="A-IRA.png" alt="A-IRA">
+  <img width="200" height="200" src="LA-IRA.png" alt="A-IRA">
   <h1>LA-IRA
   <br>
   LunarAres - Integrated route assistant
@@ -138,9 +138,11 @@ Writes `dist/artifact/` (`index.html` without the document wrapper, the other fi
 
 ## Deploy to Vercel
 
-The Vercel deployment serves the planner as static files and requests every layer from NASA through
-Python functions in `api/` each time the user opens the planner or presses **Update data** (nothing is
-cached: responses are `no-store` and each request is unique):
+The planner opens with the deployed package or the browser's IndexedDB copy. On opening, it checks
+NASA in the background through the Python functions in `api/`; the status indicator shows when a
+check is running. **Update data** starts a check or joins one already in progress. The browser
+compares SHA-256 hashes, displays changes for review, and saves verified files when **Apply** is
+selected. Unchanged files receive a bodyless HTTP 304 response.
 
 | Endpoint | Returns |
 | --- | --- |
@@ -151,9 +153,10 @@ cached: responses are `no-store` and each request is unique):
 | `/api/radiation?body=mars` | mean RAD E dose of the newest 5 sols and the position of Curiosity at that time |
 
 The RAD products are ~70 MB per sol, so the function reads only the dose values with HTTP range
-requests. The data packaged by the Vercel build (`tools/prepare_data.py`) is only a fallback, used when
-NASA cannot be reached; the planner lists which layers fell back. Custom source URLs are unavailable
-in this deployment.
+requests. Only Mars has a live radiation source; the Moon uses its packaged CRaTER-based reference.
+If a check fails, the previously saved or deployed data remains in use and the error is
+reported. Custom source URLs are unavailable in this deployment. The local development server
+also checks in the background, subject to its existing 10-minute NASA-check cooldown.
 
 Connect the repository to Vercel with the project root set to the repository root. `vercel.json`
 selects the `Other` framework preset, configures the build output, and keeps the local development
@@ -183,6 +186,88 @@ The routing cost model is separated into `cost-model.js`; the reusable search
 workspace is in `grid-workspace.js` and D* Lite is in `dstar-lite.js`.
 `route.js` orchestrates leg searches, stop ordering and the timeline.
 
+## Technical model: what the code calculates
+
+This section describes the current implementation in `app/js/`; it does not
+describe a complete astronaut-survival model.
+
+### Terrain, movement and route
+
+- `terrain.js` estimates slope from the elevation grid with a 3 × 3 Horn
+  stencil: $\theta=\arctan(\sqrt{g_x^2+g_y^2})\cdot180/\pi$, where
+  $g_x,g_y$ are the local elevation gradients. `cost-model.js` blocks a step
+  if the destination cell, uphill/downhill grade or cross-slope exceeds its
+  limit.
+- The default limits are 25° along the route and 20° across it. Above 15°,
+  walking time receives an extra penalty. A cell classified as sand gets the
+  adjustable sand multiplier (1.5 by default). These are assumptions, not
+  measured suit-performance values.
+- For one grid step, $d$ is horizontal distance in metres, $\Delta z$ is
+  elevation change in metres, and $s=\Delta z/d$ is the signed grade. The
+  adapted Tobler formula estimates speed and step time:
+
+$$
+\begin{aligned}
+v(s) &= \frac{v_0}{3.6}
+\exp\!\left(-3.5\left|s+0.05\right|+0.175\right),\\
+t_{\text{step}} &=
+\frac{\sqrt{d^2+(\Delta z)^2}}{v(s)}
+\cdot P_\theta\cdot P_{\text{sand}}
+\end{aligned}
+$$
+
+Here $v_0$ is the profile's base speed in km/h; division by 3.6 converts it
+to m/s. The code sets $P_\theta=1$ up to 15°, then increases it as
+$1+2(\theta-15^\circ)/10^\circ$; $P_{\text{sand}}$ is the configured
+multiplier in sand cells and 1 elsewhere (1.5 by default). Carrying a load
+reduces base speed by 20% and tightens both slope limits by 5°. This is a
+planning model, not a calibrated prediction of an astronaut's walking speed.
+
+The grid has eight possible neighbor steps. A* is the default pathfinder;
+Dijkstra and D* Lite are alternatives. The planner can try visit orders for up
+to six reachable stops and selects the order with the least total travel time.
+It then adds the chosen stop-work durations. A reverse-direction Dijkstra run
+calculates travel time back to the habitat from each cell.
+
+### EVA time budget
+
+The code adds travel time and stop-work time, then compares the total with the
+EVA duration after reserving the configured percentage:
+
+$$
+\begin{aligned}
+T_{\text{plan}} &= T_{\text{travel}}+60W,\\
+T_{\text{budget}} &= T_{\text{EVA}}\left(1-\frac{r}{100}\right),\\
+\text{slack} &= T_{\text{budget}}-T_{\text{plan}}.
+\end{aligned}
+$$
+
+Times in these equations are seconds, except $W$, which is the total
+stop-work time in minutes; $r$ is the reserve percentage. The app shows time
+and reserve warnings, but does not calculate oxygen consumption.
+
+### Radiation estimate
+
+When a RAD reference is available, the code estimates each cell's dose rate by
+scaling the reference according to terrain visibility. It computes visibility
+from the terrain in 16 directions, looking up to 40 cells out on a
+lower-resolution grid:
+
+$$
+\dot D(c)=R_{\text{RAD}}
+\frac{\text{SVF}(c)}{\text{SVF}(c_{\text{ref}})},
+\qquad
+D_{\text{route}}=\sum_i\dot D(c_i)\frac{\Delta t_i}{3600}
++\sum_k\dot D(p_k)\frac{w_k}{60}.
+$$
+
+$\dot D$ is dose rate in $\mu\text{Gy}/\text{h}$; travel durations
+$\Delta t_i$ are in seconds and stop durations $w_k$ are in minutes, so
+$D_{\text{route}}$ is in $\mu\text{Gy}$. This is an estimate, not a
+radiation-transport simulation. The code does not model dust storms, solar
+particle events, oxygen use, or a single overall survival score or GO/NO-GO
+verdict.
+
 Focused checks: `node --experimental-default-type=module --test checks/routing.test.js`
 and `python -m unittest discover -s checks -p test_artifact.py`.
 
@@ -197,15 +282,31 @@ and `python -m unittest discover -s checks -p test_artifact.py`.
 | `crism_*.png` | PDS Geosciences, CRISM MTRDR `FRT0000B6F1_07` (HYD, PHY, CAR, TRU browse) | Minerals and suggested points |
 | `traverse.json` | `mars.nasa.gov/mmgis-maps/MSL/Layers/json/MSL_waypoints.json` (inside the map; latest available sols) | Curiosity traverse |
 
-The packaged 6.55 uGy/h dose rate comes from Curiosity RAD (PDS PPI, `MSL-M-RAD-3-RDR-V1.0`, E dose of sols 4669 to 4673). On Vercel it is replaced by the value `/api/radiation` computes from the newest sols each time the planner opens or updates.
+The packaged 6.55 uGy/h dose rate comes from Curiosity RAD (PDS PPI, `MSL-M-RAD-3-RDR-V1.0`, E dose of sols 4669 to 4673). On Vercel the background check compares it with the newest value from `/api/radiation`; after an update is applied the saved value is used on subsequent openings.
 
-## Assumptions and limits
+## Measured vs assumed
 
-- Suit speed, slope limits (25 deg along the step, 20 deg sideways), sand factor, EVA duration (6 h), reserve (30%) and time per stop (20 min) are adjustable in the app.
-- ~2.4 m cells: rocks and steps smaller than ~3 m do not appear.
-- The radiation map is an estimate: the dose measured by RAD at one point, scaled by the sky fraction computed from the DTM.
-- CRISM is 18 m/pixel and its alignment with HiRISE is approximate.
-- THEMIS is ~100 m/pixel; sand classification is regional.
+| Measured (source data) | Derived by A-IRA | Assumed (editable) | Not modelled |
+|---|---|---|---|
+| NASA terrain and optical products (HiRISE DTM and mosaic, or LROC NAC on the Moon); THEMIS night IR; CRISM browse products; Curiosity waypoints; RAD dose observations | Slope from the DTM, a regional sand mask (coldest 30% of THEMIS pixels), sky-view dose estimate, walking-time costs, routes and return-time map | Base walking speed, slope limits (25° along the step and 20° sideways), sand penalty, 6-hour EVA, 30% reserve and 20 minutes per stop | Rocks and steps smaller than ~3 m, dust storms, solar particle events, oxygen use and position error |
+
+“Measured” describes the source observation, not a direct measurement of every cell. For example, the radiation layer extrapolates a point measurement using terrain visibility, and the sand mask is a regional heuristic rather than a measured sand map. Source-card `OK` / `FAIL` indicators report availability; they do not certify a model output as measured.
+
+## Known limitations
+
+- The ~2.4 m grid cannot represent rocks and steps smaller than ~3 m.
+- Tobler's function is an Earth hiking model, not calibrated for suited walking in 0.38 g.
+- Radiation is RAD measured at one point scaled by sky visibility; it is an estimate, not a radiation map.
+- CRISM is 18 m/pixel and its alignment with HiRISE is approximate; THEMIS is ~100 m/pixel.
+- D* Lite restarts for each leg, and Dijkstra and D* Lite can be slow on the full grid.
+- Custom-source similarity checking is a placeholder.
+
+## Use of AI
+
+- Claude was used for most of the coding.
+- GitHub Copilot assisted with debugging, lint and loading issues, the Moon landing visualization, Vercel preparation and this documentation, based on the project's recent work history.
+- The team remains responsible for the site, data sources, safety assumptions and final review.
+- AI-generated media was used in the project submission.
 
 ## Credits
 

@@ -2,17 +2,13 @@
 Run: uv run python -m unittest discover -s checks -p "test_refresh.py" -v"""
 import hashlib
 import json
-import sys
 import tempfile
 import threading
 import time
 import unittest
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "tools"))
-import adapters  # noqa: E402
-import serve  # noqa: E402
+from tools import adapters, serve
 
 META = b'{"lonW": 1, "lonE": 2, "latN": 3, "latS": 4, "N": 5}'
 LAYERS = ["elevation", "optical", "hillshade"]
@@ -24,12 +20,12 @@ class RefreshTests(unittest.TestCase):
         self.saved = (serve.DATA_DIR, adapters.prepare_source)
         serve.DATA_DIR = Path(self.tmp.name)
         self.content = {"elev.txt": b"elev", "hirise.jpg": b"hirise", "hillshade.jpg": b"shade"}
-        self.calls, self.fail, self.delay = [], set(), 0
+        self.calls, self.fail_sources, self.delay = [], set(), 0
 
         def fake(body, src, out, url=None):
             self.calls.append(src["id"])
             time.sleep(self.delay)
-            if src["id"] in self.fail:
+            if src["id"] in self.fail_sources:
                 raise RuntimeError("nasa down")
             out = Path(out)
             out.mkdir(parents=True, exist_ok=True)
@@ -95,7 +91,7 @@ class RefreshTests(unittest.TestCase):
         self.assertEqual(sorted(d["throttled"] for _, d in res), [False, True])
 
     def test_failed_layer_keeps_old_file(self):
-        self.fail = {"hillshade"}
+        self.fail_sources = {"hillshade"}
         self.content["hirise.jpg"] = b"new hirise"
         code, d = serve.refresh("moon")
         self.assertEqual(code, 200)

@@ -1,4 +1,7 @@
 """Vercel function returning the latest RAD dose rate and where it was measured: /api/radiation?body=mars."""
+import hashlib
+import json
+
 import requests
 
 from tools.live import current_radiation
@@ -15,4 +18,5 @@ class handler(ApiHandler):
         except (requests.RequestException, OSError, ValueError, RuntimeError) as error:
             self.send_json(502, {"error": "NASA radiation data is unavailable", "detail": str(error)[:160]})
             return
-        self.send_json(200, radiation)
+        data = json.dumps(radiation).encode("utf-8")
+        self.send_hashed_bytes(data, "application/json", hashlib.sha256(data).hexdigest())

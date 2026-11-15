@@ -3,10 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>LA-IRA</title>
+<link rel="icon" type="image/x-icon" href="./LA-IRA.ico">
 <style>:root{padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}body{margin:0}</style>
 </head>
 <body>
-<title>A-IRA EVA Planner</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -16,7 +17,7 @@
 <div id="gate" class="gate" role="dialog" aria-modal="true" aria-labelledby="gateTitle">
   <div class="gate-box">
     <div class="title-block">
-      <h1 id="gateTitle">Boxwork EVA Planner</h1>
+      <h1 id="gateTitle">LA-IRA</h1>
       <span class="sub">Choose a body and the data sources that feed the planner.</span>
     </div>
     <div class="gate-field">
@@ -48,11 +49,11 @@
 <div class="app">
   <header class="topbar">
     <div class="title-block">
-      <h1>A-IRA EVA Planner</h1>
+      <h1>LA-IRA</h1>
       <span class="sub" id="subtitle">Mount Sharp, Gale crater · 2.46 × 2.46 km area · NASA data (HiRISE, DTM, CRISM, THEMIS, RAD)</span>
     </div>
     <div class="top-actions">
-      <span id="dataTime" class="note"></span>
+      <span id="dataTime" class="note" role="status" aria-live="polite"></span>
       <button type="button" id="btnUpdate" title="Request the latest data from NASA again" hidden>Update data</button>
       <span id="status" class="pill info">Loading data…</span>
     </div>

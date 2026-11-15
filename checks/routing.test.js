@@ -84,6 +84,35 @@ test('loader accepts a topography-only package and rejects invalid elevation', a
   } finally { globalThis.fetch = oldFetch; }
 });
 
+test('loader accepts elevation stored as raw bytes in the browser cache', async () => {
+  const meta = { schema: 1, body: { name: 'Moon', radius: 1737400 }, N: 2,
+    lonW: 0, lonE: 1, latS: 0, latN: 1 };
+  const bytes = new Uint8Array(16), view = new DataView(bytes.buffer), oldFetch = globalThis.fetch;
+  for (let i = 0; i < 4; i++) view.setFloat32(i * 4, i + 1, true);
+  globalThis.fetch = async url => url === 'data/meta.json'
+    ? { ok: true, json: async () => meta }
+    : { ok: true, arrayBuffer: async () => bytes.buffer };
+  try {
+    const data = await loadData('data/');
+    assert.deepEqual(Array.from(data.elev), [1, 2, 3, 4]);
+  } finally { globalThis.fetch = oldFetch; }
+});
+
+test('loader does not persist cached blobs under the deployed package hash', async () => {
+  const meta = { schema: 1, body: { name: 'Moon', radius: 1737400 }, N: 2,
+    lonW: 0, lonE: 1, latS: 0, latN: 1 };
+  const urls = {
+    'meta.json': URL.createObjectURL(new Blob([JSON.stringify(meta)])),
+    'elev.txt': URL.createObjectURL(new Blob([new Uint8Array(16)]))
+  };
+  const persisted = [];
+  try {
+    const data = await loadData('data/', null, null, name => urls[name], name => persisted.push(name));
+    assert.equal(data.elev.length, 4);
+    assert.deepEqual(persisted, []);
+  } finally { Object.values(urls).forEach(url => URL.revokeObjectURL(url)); }
+});
+
 test('loader only uses layers selected for the deployment', async () => {
   const meta = {
     schema: 1, body: { name: 'Mars', radius: 3396190 }, N: 2,
@@ -159,6 +188,26 @@ test('live loader falls back to the packaged snapshot when NASA is unavailable',
     assert.equal(data.meta.radiationLive, undefined);
     assert.deepEqual(data.fallbacks.slice().sort(), ['elevation', 'radiation', 'traverse']);
   } finally { globalThis.fetch = oldFetch; console.warn = warn; }
+});
+
+test('live Moon loader retains the packaged radiation reference without querying RAD', async () => {
+  const bytes = new Uint8Array(16), oldFetch = globalThis.fetch, requested = [];
+  const meta = { ...liveMeta(), body: { name: 'Moon', radius: 1737400 }, layers: {},
+    radiation: { rate: 5.1, lat: 0.4, lng: 0.4 } };
+  globalThis.fetch = async url => {
+    requested.push(url);
+    if (url === 'data/meta.json') return { ok: true, json: async () => meta };
+    if (url.startsWith('/api/layer?body=moon&name=elevation')) {
+      return { ok: true, arrayBuffer: async () => bytes.buffer };
+    }
+    throw new Error('Unexpected request: ' + url);
+  };
+  try {
+    const data = await loadData('data/', { elevation: true }, 'moon');
+    assert.deepEqual(data.meta.radiation, { rate: 5.1, lat: 0.4, lng: 0.4 });
+    assert.deepEqual(data.fallbacks, []);
+    assert.ok(!requested.some(url => url.startsWith('/api/radiation')));
+  } finally { globalThis.fetch = oldFetch; }
 });
 
 test('declared thermal and radiation data enable their models', () => {
