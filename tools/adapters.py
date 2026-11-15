@@ -185,14 +185,17 @@ def _wmts(body: BodyProfile, src: Source, out: Path, url: str | None) -> None:
     big.crop(box).resize((3840, 3840), Image.Resampling.LANCZOS).convert("RGB").save(out / "hirise.jpg", quality=78)
 
 
-def prepare_source(body: BodyProfile, src: Source, out: Path, url: str | None = None) -> None:
+def prepare_source(
+    body: BodyProfile, src: Source, out: Path, url: str | None = None, with_meta: bool = True,
+) -> None:
     """Download/convert one source into `out` (raises on failure). For `mars:*` adapters an override URL
-    is ignored (the step functions are fixed to the Mars services)."""
+    is ignored (the step functions are fixed to the Mars services). with_meta=False skips the
+    meta.json that `mars:*` adapters otherwise create first."""
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     ad = src["adapter"]
     if ad.startswith("mars:"):
-        if not (out / "meta.json").is_file():
+        if with_meta and not (out / "meta.json").is_file():
             prepare_data.STEPS["meta"](out)
         prepare_data.STEPS[ad.split(":", 1)[1]](out)
     elif ad == "imageserver-dem":

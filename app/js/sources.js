@@ -11,6 +11,16 @@ async function getJson(url, opts) {
   return { status: r.status, ok: r.ok, json: j };
 }
 
+// "Update data" in the planner reloads the page and asks for this reopening, so the NASA requests are made again
+// right away with the same body and layers instead of waiting at the startup screen.
+function takeReopen() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem('aira.reopen') || 'null');
+    sessionStorage.removeItem('aira.reopen');
+    return saved && typeof saved.body === 'string' && saved.layers && typeof saved.layers === 'object' ? saved : null;
+  } catch (e) { return null; }
+}
+
 export function runGate(onReady) {
   const gate = $('#gate'), sel = $('#gateBody'), list = $('#gateList'), msg = $('#gateMsg');
   const bRe = $('#gateRecheck'), bGo = $('#gateGo'), bPart = $('#gatePartial');
@@ -82,7 +92,7 @@ export function runGate(onReady) {
       render(); setBusy(false);
       const bad = checks.filter((c) => !c.ok).length;
       say(deployment ? (elevOk() ? deployment.mode === 'live'
-          ? 'Packaged layers are ready; the Curiosity traverse is refreshed from NASA when you open the planner.'
+          ? 'Layers are requested from NASA each time you open or update the planner; the data packaged at deploy time is only the fallback.'
           : 'Static deployment: only included data sources are available.'
           : 'Topography is not included in this deployment.')
         : !elevOk() ? 'Topography (required) is not reachable. Fix the source or its URL and re-check.'
@@ -157,8 +167,16 @@ export function runGate(onReady) {
         try { const p = await getJson('bodies/' + encodeURIComponent(x.id) + '.json'); if (p.ok && p.json.name) name = p.json.name; } catch (e) { /* keep API name */ }
         const o = document.createElement('option'); o.value = x.id; o.textContent = name || x.id; sel.appendChild(o);
       }
-      sel.value = bodies.some((x) => x.id === 'mars') ? 'mars' : bodies[0].id;
-      load(sel.value, false);
+      const reopen = deployment ? takeReopen() : null;
+      sel.value = reopen && bodies.some((x) => x.id === reopen.body) ? reopen.body
+        : bodies.some((x) => x.id === 'mars') ? 'mars' : bodies[0].id;
+      await load(sel.value, false);
+      if (reopen && reopen.body === sel.value && profile && elevOk()) {
+        for (const src of profile.sources) {
+          if (!src.required && src.id in reopen.layers) checked[src.id] = !!reopen.layers[src.id];
+        }
+        prepare();
+      }
     } catch (e) {
       say('Cannot reach the data service (' + e.message + '). Start it with "uv run tools/serve.py", then press Re-check.', true);
     }

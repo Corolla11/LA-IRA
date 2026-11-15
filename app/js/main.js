@@ -115,12 +115,39 @@ window.evaDebug = function () {
   };
 };
 
+function addNote(text) {
+  var li = document.createElement('li'); li.textContent = text; $('#sourceNotes').appendChild(li);
+}
+// The RAD reference point follows Curiosity: the profile target tied to it moves to where the latest dose was measured.
+function followLiveRadiation(profile, meta) {
+  if (!meta.radiationLive) return;
+  var target = (profile.targets || []).filter(function (t) { return t.src === 'Curiosity / RAD'; })[0];
+  if (target) {
+    target.lat = meta.radiation.lat; target.lng = meta.radiation.lng;
+    target.name = 'Curiosity point, sol ' + meta.radiationLive.sol;
+  }
+}
+function addLiveNotes(data, live) {
+  if (!live) return;
+  var late = data.fallbacks.map(function (label) { return label === 'optical' ? 'HiRISE' : label; });
+  addNote(late.length
+    ? 'NASA could not be reached for: ' + late.join(', ') + '. Those layers show the snapshot taken when this version was deployed.'
+    : 'Elevation, thermal, minerals, traverse and radiation were requested from NASA when this planner opened, and the HiRISE and hillshade images too. Use "Update data" to request them again.');
+  var radNote = $('#radNote');
+  if (data.meta.radiationLive && radNote) {
+    var r = data.meta.radiationLive;
+    radNote.textContent = 'mean E dose of ' + nf(data.meta.radiation.rate, 2) + ' µGy/h measured on sols ' +
+      r.firstSol + '–' + r.lastSol + ' (the newest in the PDS archive), taken at the position of Curiosity on sol ' + r.sol;
+  }
+}
+
 // body = profile from app/bodies/<id>.json; manifest contains the selected source layers.
 async function start(bodyProfile, manifest) {
   body = bodyProfile;
   state.p.v0 = body.v0 || DEFAULT_PARAMS.v0;
   try {
     raw = await loadData('data/' + body.id + '/', manifest.layers, manifest.live ? body.id : null);
+    followLiveRadiation(body, raw.meta);
     grid = buildTerrain(raw);
   } catch (err) {
     setStatus('Error loading data', 'bad');
@@ -132,6 +159,16 @@ async function start(bodyProfile, manifest) {
   else $('#radRef').textContent = 'unavailable';
   $('#subtitle').textContent = body.subtitle || ((grid.meta.name || 'Exploration area') + ' · ' + grid.meta.body.name);
   if (body.notes) $('#sourceNotes').replaceChildren.apply($('#sourceNotes'), body.notes.map(function (t) { var li = document.createElement('li'); li.textContent = t; return li; }));
+  addLiveNotes(raw, manifest.live);
+  if (manifest.live) {
+    var update = $('#btnUpdate');
+    update.hidden = false;
+    update.onclick = function () {
+      update.disabled = true;
+      try { sessionStorage.setItem('aira.reopen', JSON.stringify({ body: body.id, layers: manifest.layers })); } catch (e) { /* the startup screen is shown instead */ }
+      location.reload();
+    };
+  }
   $('#pV0').value = state.p.v0; $('#pV0').dispatchEvent(new Event('input'));
   setSolRange(raw.trav);
   CANDS = buildCandidates(grid, raw.crism, body);

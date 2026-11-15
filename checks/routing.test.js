@@ -108,25 +108,57 @@ test('loader only uses layers selected for the deployment', async () => {
   } finally { globalThis.fetch = oldFetch; }
 });
 
-test('loader fetches the latest traverse for live deployments', async () => {
-  const meta = {
+function liveMeta() {
+  return {
     schema: 1, body: { name: 'Mars', radius: 3396190 }, N: 2,
-    lonW: 0, lonE: 1, latS: 0, latN: 1, layers: { traverse: 'traverse.json' }
+    lonW: 0, lonE: 1, latS: 0, latN: 1, layers: { traverse: 'traverse.json' },
+    radiation: { rate: 6.55, lat: 0.4, lng: 0.4 }
   };
-  const bytes = new Uint8Array(16), oldFetch = globalThis.fetch, requested = [];
-  globalThis.fetch = async url => {
+}
+
+test('live loader requests NASA-backed endpoints for every layer, bypassing caches', async () => {
+  const bytes = new Uint8Array(16), view = new DataView(bytes.buffer), oldFetch = globalThis.fetch, requested = [], caches = [];
+  for (let i = 0; i < 4; i++) view.setFloat32(i * 4, 10 + i, true);
+  const current = { rate: 6.4, lat: 0.5, lng: 0.6, sol: 4841, firstSol: 4839, lastSol: 4843 };
+  globalThis.fetch = async (url, options) => {
     requested.push(url);
-    if (url === '/api/traverse?body=mars') {
-      return { ok: true, json: async () => [[4671, -4.8, 137.38]] };
-    }
-    return { ok: true, json: async () => meta, text: async () => Buffer.from(bytes).toString('base64') };
+    if (url.startsWith('/api/')) caches.push(options && options.cache);
+    if (url.startsWith('/api/layer?body=mars&name=elevation&t=')) return { ok: true, arrayBuffer: async () => bytes.buffer };
+    if (url.startsWith('/api/traverse?body=mars&t=')) return { ok: true, json: async () => [[5073, -4.8, 137.38]] };
+    if (url.startsWith('/api/radiation?body=mars&t=')) return { ok: true, json: async () => current };
+    return { ok: true, json: async () => liveMeta() };
   };
   try {
     const data = await loadData('data/', { elevation: true, traverse: true }, 'mars');
-    assert.deepEqual(data.trav, [[4671, -4.8, 137.38]]);
-    assert.ok(requested.includes('/api/traverse?body=mars'));
-    assert.ok(!requested.includes('data/traverse.json'));
+    assert.deepEqual(Array.from(data.elev), [10, 11, 12, 13]);
+    assert.deepEqual(data.trav, [[5073, -4.8, 137.38]]);
+    assert.deepEqual(data.meta.radiation, { rate: 6.4, lat: 0.5, lng: 0.6 });
+    assert.deepEqual(data.meta.radiationLive, { sol: 4841, firstSol: 4839, lastSol: 4843 });
+    assert.deepEqual(data.fallbacks, []);
+    assert.ok(!requested.includes('data/elev.txt') && !requested.includes('data/traverse.json'));
+    assert.equal(caches.length, 3);
+    assert.ok(caches.every(mode => mode === 'no-store'));
   } finally { globalThis.fetch = oldFetch; }
+});
+
+test('live loader falls back to the packaged snapshot when NASA is unavailable', async () => {
+  const bytes = new Uint8Array(16), view = new DataView(bytes.buffer), oldFetch = globalThis.fetch;
+  for (let i = 0; i < 4; i++) view.setFloat32(i * 4, i, true);
+  const warn = console.warn;
+  console.warn = () => {};
+  globalThis.fetch = async url => {
+    if (url.startsWith('/api/')) return { ok: false, status: 502 };
+    if (url === 'data/traverse.json') return { ok: true, json: async () => [[4670, -4.8, 137.38]] };
+    return { ok: true, json: async () => liveMeta(), text: async () => Buffer.from(bytes).toString('base64') };
+  };
+  try {
+    const data = await loadData('data/', { elevation: true, traverse: true }, 'mars');
+    assert.deepEqual(Array.from(data.elev), [0, 1, 2, 3]);
+    assert.deepEqual(data.trav, [[4670, -4.8, 137.38]]);
+    assert.deepEqual(data.meta.radiation, { rate: 6.55, lat: 0.4, lng: 0.4 });
+    assert.equal(data.meta.radiationLive, undefined);
+    assert.deepEqual(data.fallbacks.slice().sort(), ['elevation', 'radiation', 'traverse']);
+  } finally { globalThis.fetch = oldFetch; console.warn = warn; }
 });
 
 test('declared thermal and radiation data enable their models', () => {

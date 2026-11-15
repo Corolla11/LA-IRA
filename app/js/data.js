@@ -2,7 +2,10 @@
  * data.js - loads every generated file from app/data/ into memory.
  *
  * Input : base URL of the data folder ('data/' for the app, '../app/data/' for tests).
- * Output: loadData(base) resolves to { meta, elev, trav, themis, crism }.
+ * Output: loadData(base, layers, liveBody) resolves to { meta, elev, trav, themis, crism, fallbacks }.
+ *         With liveBody (a live deployment) each layer is requested from /api/layer, /api/traverse and /api/radiation
+ *         every time the planner opens or is updated, and the packaged files below are the fallback (listed in
+ *         `fallbacks`).
  * Used by: main.js (start) and tests/route.test.html. terrain.js turns the result into the grid.
  *
  * Files fetched from app/data (all produced by tools/prepare_data.py, never edited by hand):
@@ -32,6 +35,16 @@ export function imageData(im) {
   var cv = document.createElement('canvas'); cv.width = im.naturalWidth; cv.height = im.naturalHeight;
   var cx = cv.getContext('2d'); cx.drawImage(im, 0, 0); return cx.getImageData(0, 0, cv.width, cv.height);
 }
+// N*N little-endian float32 values from raw bytes; validates the size and that every value is finite
+function floatsFrom(buffer, N) {
+  if (buffer.byteLength !== N * N * 4) throw new Error('Elevation size does not match the grid.');
+  var view = new DataView(buffer), elev = new Float32Array(N * N);
+  for (var i = 0; i < elev.length; i++) {
+    elev[i] = view.getFloat32(i * 4, true);
+    if (!Number.isFinite(elev[i])) throw new Error('Elevation contains missing or invalid values.');
+  }
+  return elev;
+}
 
 export async function loadData(base, selectedLayers, liveBody) {
   base = base || 'data/';
@@ -58,37 +71,91 @@ export async function loadData(base, selectedLayers, liveBody) {
     if (selectedLayers.minerals && available.crism) selected.crism = available.crism;
     meta.layers = selected;
   }
-  var b64 = await (await get('elev.txt')).text(), bin = atob(b64.trim()), raw = new Uint8Array(bin.length);
-  if (bin.length !== meta.N * meta.N * 4) throw new Error('Elevation size does not match the grid.');
-  for (var bi = 0; bi < bin.length; bi++) raw[bi] = bin.charCodeAt(bi);
-  var view = new DataView(raw.buffer), elev = new Float32Array(meta.N * meta.N);
-  for (bi = 0; bi < elev.length; bi++) {
-    elev[bi] = view.getFloat32(bi * 4, true);
-    if (!Number.isFinite(elev[bi])) throw new Error('Elevation contains missing or invalid values.');
-  }
   var layers = meta.layers || {};
-  if (layers.image) await loadImage(base + layers.image);
-  if (layers.hillshade) await loadImage(base + layers.hillshade);
-  var trav = [];
-  if (layers.traverse) {
-    if (liveBody) {
-      var traverseResponse = await fetch('/api/traverse?body=' + encodeURIComponent(liveBody));
-      if (!traverseResponse.ok) throw new Error('Cannot load current traverse: HTTP ' + traverseResponse.status);
-      trav = await traverseResponse.json();
-      if (!Array.isArray(trav)) throw new Error('Current traverse response is invalid.');
-    } else trav = await (await get(layers.traverse)).json();
+  var crismKeys = Object.keys(layers.crism || {});
+  if (crismKeys.length && (!meta.crism ||
+      ![meta.crism.lonW, meta.crism.lonE, meta.crism.latS, meta.crism.latN].every(Number.isFinite) ||
+      meta.crism.lonW >= meta.crism.lonE || meta.crism.latS >= meta.crism.latN)) throw new Error('Valid CRISM bounds are required.');
+  if (crismKeys.length && !['hyd', 'phy', 'car', 'tru'].every(function (key) { return layers.crism[key]; })) {
+    throw new Error('The CRISM layer requires hyd, phy, car and tru images.');
   }
-  var themis = layers.thermal ? imageData(await loadImage(base + layers.thermal)) : null;
+
+  // In a live deployment every layer is requested from the NASA-backed functions each time the planner opens or is
+  // updated; the snapshot packaged at deploy time is only the fallback, and each fallback is reported in `fallbacks`.
+  var fallbacks = [], urls = {};
+  // The timestamp makes each request unique, so neither the browser nor a CDN can answer from a stored copy.
+  var stamp = Date.now();
+  function endpoint(path) { return '/api/' + path + (path.indexOf('?') < 0 ? '?' : '&') + 't=' + stamp; }
+  function layerUrl(name) { return endpoint('layer?body=' + encodeURIComponent(liveBody) + '&name=' + encodeURIComponent(name)); }
+  async function fresh(label, live, snapshot) {
+    if (!liveBody) return snapshot();
+    try { return await live(); } catch (err) {
+      console.warn('NASA ' + label + ' unavailable, using the deployed snapshot:', err);
+      if (fallbacks.indexOf(label) < 0) fallbacks.push(label);
+      return snapshot();
+    }
+  }
+  async function fetchLive(path, kind) {
+    var response = await fetch(path, { cache: 'no-store' });
+    if (!response.ok) throw new Error('HTTP ' + response.status + ' from ' + path);
+    return kind === 'buffer' ? response.arrayBuffer() : response.json();
+  }
+  // Resolves { url, image } from the NASA-backed function, or from the packaged file
+  function picture(label, liveName, file) {
+    return fresh(label, async function () {
+      var url = layerUrl(liveName);
+      return { url: url, image: await loadImage(url) };
+    }, async function () {
+      var url = base + file;
+      return { url: url, image: await loadImage(url) };
+    });
+  }
+  // Map overlays (HiRISE, hillshade) are not awaited: Leaflet loads them itself and map.js switches to the
+  // packaged file if the NASA one fails, so the slow HiRISE mosaic never delays opening the planner.
+  function overlay(liveName, file) {
+    if (!liveBody) return loadImage(base + file).then(function () { return { url: base + file }; });
+    return Promise.resolve({ url: layerUrl(liveName), snapshot: base + file });
+  }
+  var jobs = {
+    elev: fresh('elevation', async function () {
+      return floatsFrom(await fetchLive(layerUrl('elevation'), 'buffer'), meta.N);
+    }, async function () {
+      var bin = atob((await (await get('elev.txt')).text()).trim()), raw = new Uint8Array(bin.length);
+      for (var bi = 0; bi < bin.length; bi++) raw[bi] = bin.charCodeAt(bi);
+      return floatsFrom(raw.buffer, meta.N);
+    }),
+    image: layers.image ? overlay('optical', layers.image) : null,
+    hillshade: layers.hillshade ? overlay('hillshade', layers.hillshade) : null,
+    thermal: layers.thermal ? picture('thermal', 'thermal', layers.thermal) : null,
+    trav: layers.traverse ? fresh('traverse', async function () {
+      var points = await fetchLive(endpoint('traverse?body=' + encodeURIComponent(liveBody)));
+      if (!Array.isArray(points)) throw new Error('Current traverse response is invalid.');
+      return points;
+    }, async function () { return (await get(layers.traverse)).json(); }) : null,
+    radiation: liveBody && meta.radiation ? fresh('radiation', async function () {
+      var current = await fetchLive(endpoint('radiation?body=' + encodeURIComponent(liveBody)));
+      if (![current.rate, current.lat, current.lng].every(Number.isFinite) || current.rate <= 0) {
+        throw new Error('Current radiation response is invalid.');
+      }
+      return current;
+    }, async function () { return null; }) : null,
+    crism: Promise.all(crismKeys.map(function (key) { return picture('minerals', 'minerals-' + key, layers.crism[key]); }))
+  };
+  var loaded = await Promise.all([jobs.elev, jobs.image, jobs.hillshade, jobs.thermal, jobs.trav, jobs.radiation, jobs.crism]);
+  var elev = loaded[0], image = loaded[1], hillshade = loaded[2], thermal = loaded[3], trav = loaded[4] || [];
+  var radiation = loaded[5], crismPictures = loaded[6];
+  if (image) urls.image = image;
+  if (hillshade) urls.hillshade = hillshade;
+  if (liveBody) meta.urls = urls;
+  if (radiation) {
+    meta.radiation = { rate: radiation.rate, lat: radiation.lat, lng: radiation.lng };
+    meta.radiationLive = { sol: radiation.sol, firstSol: radiation.firstSol, lastSol: radiation.lastSol };
+  }
+  var themis = thermal ? imageData(thermal.image) : null;
   if (themis && (themis.width !== meta.themisSize || themis.height !== meta.themisSize || meta.themisSize < 2)) {
     throw new Error('Thermal image dimensions do not match themisSize.');
   }
-  var crism = {}, keys = Object.keys(layers.crism || {});
-  if (keys.length && (!meta.crism ||
-      ![meta.crism.lonW, meta.crism.lonE, meta.crism.latS, meta.crism.latN].every(Number.isFinite) ||
-      meta.crism.lonW >= meta.crism.lonE || meta.crism.latS >= meta.crism.latN)) throw new Error('Valid CRISM bounds are required.');
-  if (keys.length && !['hyd', 'phy', 'car', 'tru'].every(function (key) { return layers.crism[key]; })) {
-    throw new Error('The CRISM layer requires hyd, phy, car and tru images.');
-  }
-  for (var ki = 0; ki < keys.length; ki++) crism[keys[ki]] = imageData(await loadImage(base + layers.crism[keys[ki]]));
-  return { meta: meta, elev: elev, trav: trav, themis: themis, crism: crism };
+  var crism = {};
+  crismKeys.forEach(function (key, index) { crism[key] = imageData(crismPictures[index].image); });
+  return { meta: meta, elev: elev, trav: trav, themis: themis, crism: crism, fallbacks: fallbacks };
 }

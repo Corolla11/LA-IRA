@@ -52,6 +52,7 @@ IMAGE_SERVER = "https://trek.nasa.gov/mars/trekarcgis/rest/services/Gale_DEM_SMG
 # {phy,hyd,car,tru}j_mtr3.png
 CRISM_BASE = ("https://pds-geosciences.wustl.edu/mro/mro-m-crism-5-rdr-mptargeted-v1/mrocr_4001/"
               "browse/2008/2008_191/frt0000b6f1/frt0000b6f1_07_br")
+CRISM_PRODUCTS = ("phy", "hyd", "car", "tru")
 
 
 def fetch_crism_label() -> list[float]:
@@ -193,12 +194,19 @@ def step_crism(out: Path) -> None:
     If pixels ever differ from the reference, check first whether only alpha/transparent pixels differ.
     Consumer: app/js/data.js (ImageData per key) -> candidates.js (candidate sites from 'hyd'),
     map.js (renderCrism overlays, bounds from meta.json "crism")."""
+    label = fetch_crism_label()
+    for k in CRISM_PRODUCTS:
+        crism_image(k, label).save(out / f"crism_{k}.png")
+
+
+def crism_image(key: str, label: list[float] | None = None) -> Image.Image:
+    """One CRISM browse product ('phy', 'hyd', 'car' or 'tru') cropped to the bbox (see step_crism)."""
+    if key not in CRISM_PRODUCTS:
+        raise ValueError(f"unknown CRISM product {key}")
     lonW, latS, lonE, latN = bbox()
-    res, cW, cN = fetch_crism_label()
+    res, cW, cN = label or fetch_crism_label()
     x0, y0, w, h = crism_crop(lonW, lonE, latN, latS, res, cW, cN)
-    for k in ("phy", "hyd", "car", "tru"):
-        img = get_image(f"{CRISM_BASE}{k}j_mtr3.png").convert("RGBA")
-        img.crop((x0, y0, x0 + w, y0 + h)).save(out / f"crism_{k}.png")
+    return get_image(f"{CRISM_BASE}{key}j_mtr3.png").convert("RGBA").crop((x0, y0, x0 + w, y0 + h))
 
 
 STEPS = {"elev": step_elev, "meta": step_meta, "hirise": step_hirise, "hillshade": step_hillshade,

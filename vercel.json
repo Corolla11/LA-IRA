@@ -3,9 +3,9 @@
   "buildCommand": "python3 -m pip install Pillow requests && python3 tools/prepare_data.py --body mars && python3 tools/build_vercel.py",
   "outputDirectory": "dist/vercel",
   "functions": {
-    "api/traverse.py": {
+    "api/*.py": {
       "maxDuration": 60,
-      "includeFiles": "app/bodies/mars.json"
+      "includeFiles": "app/bodies/*.json"
     }
   }
 }
