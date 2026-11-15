@@ -39,7 +39,10 @@
       <h1>A-IRA EVA Planner</h1>
       <span class="sub" id="subtitle">Mount Sharp, Gale crater · 2.46 × 2.46 km area · NASA data (HiRISE, DTM, CRISM, THEMIS, RAD)</span>
     </div>
-    <span id="status" class="pill info">Loading data…</span>
+    <div class="top-actions">
+      <button type="button" id="btnUpdate" title="Request the latest data from NASA again" hidden>Update data</button>
+      <span id="status" class="pill info">Loading data…</span>
+    </div>
   </header>
 
   <main class="main">
@@ -168,7 +171,7 @@
           <li>Image: HiRISE <span class="mono">curiosity_hirise_mosaic</span>, zoom 16, NASA Mars Trek.</li>
           <li>Elevation and slope: HiRISE DTM <span class="mono">Gale_DEM_SMG_1m</span>, in ~2.4 m cells. Rocks and steps smaller than ~3 m do not appear.</li>
           <li>Minerals: CRISM MTRDR <span class="mono">FRT0000B6F1</span> (2008), HYD, PHY and CAR browse products. Alignment with HiRISE is approximate (offsets of tens of meters are possible).</li>
-          <li>Radiation: Curiosity RAD, E dose of 6.55 µGy/h measured on sols 4669–4673 at the rover location. The map is an estimate: that value multiplied by the visible sky fraction (horizon computed from the DTM, ~390 m radius), relative to that at the measured point.</li>
+          <li>Radiation: Curiosity RAD, <span id="radNote">E dose of 6.55 µGy/h measured on sols 4669–4673 at the rover location</span>. The map is an estimate: that value multiplied by the visible sky fraction (horizon computed from the DTM, ~390 m radius), relative to that at the measured point.</li>
           <li>Thermal: THEMIS night IR (~100 m). Sand = coldest 30% of the area, as a regional indication.</li>
           <li>Traverse: <span class="mono">MSL_waypoints.json</span>, sols <span data-sol-range>–</span>.</li>
           <li>Speed (adapted Tobler function), slope limits, reserve and stop times are adjustable assumptions.</li>

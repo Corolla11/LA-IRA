@@ -18,7 +18,7 @@ def strip_wrapper(html: bytes) -> bytes:
     """Return the bytes between the <body ...> tag (plus its line break) and the last </body>, with
     trailing whitespace replaced by one LF. Note: <title> and <link>/<style> placed in <head> must
     therefore live inside <body> in app/index.html (tests/test_artifact.py expects it to start with <title>)."""
-    body = re.search(rb"<body[^>]*>\r?\n?", html, re.I)
+    body = re.search(rb"<body[^>]*>\r?\n?", html, re.IGNORECASE)
     if body is None:
         raise ValueError("HTML is missing an opening body tag")
     start = body.end()

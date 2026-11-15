@@ -136,6 +136,29 @@ uv run tools/build_artifact.py
 
 Writes `dist/artifact/` (`index.html` without the document wrapper, the other files, and `files.json`).
 
+## Deploy to Vercel
+
+The Vercel deployment serves the planner as static files and requests every layer from NASA through
+Python functions in `api/` each time the user opens the planner or presses **Update data** (nothing is
+cached: responses are `no-store` and each request is unique):
+
+| Endpoint | Returns |
+| --- | --- |
+| `/api/layer?body=mars&name=elevation` | 1000 x 1000 float32 DTM, raw little-endian (kept under Vercel's 4.5 MB response limit) |
+| `/api/layer?body=mars&name=optical` | HiRISE mosaic (225 tile requests, ~20 s) |
+| `/api/layer?body=mars&name=hillshade` / `thermal` / `minerals-hyd` (`phy`, `car`, `tru`) | hillshade, THEMIS crop, CRISM products |
+| `/api/traverse?body=mars` | Curiosity waypoints inside the area, up to the latest sol |
+| `/api/radiation?body=mars` | mean RAD E dose of the newest 5 sols and the position of Curiosity at that time |
+
+The RAD products are ~70 MB per sol, so the function reads only the dose values with HTTP range
+requests. The data packaged by the Vercel build (`tools/prepare_data.py`) is only a fallback, used when
+NASA cannot be reached; the planner lists which layers fell back. Custom source URLs are unavailable
+in this deployment.
+
+Connect the repository to Vercel with the project root set to the repository root. `vercel.json`
+selects the `Other` framework preset, configures the build output, and keeps the local development
+server from being mistaken for a production Python entrypoint.
+
 ## How the data flows
 
 ```
@@ -148,7 +171,7 @@ NASA services ──► tools/prepare_data.py ──► app/data/ ──► app/
    - **Hillshade:** same ImageServer with the `Hillshade` raster function, 2000 x 2000.
    - **THEMIS night IR:** one zoom-9 tile, cropped to the 30 x 30 pixels over the area.
    - **CRISM:** the MTRDR label gives the projection; the four browse PNGs are cropped 1:1 (no resampling) to 137 x 137.
-   - **Traverse:** Curiosity waypoints, kept only inside the map and up to sol 4670.
+   - **Traverse:** Curiosity waypoints inside the map, including the latest sol available from NASA.
 2. **Store** (`app/data/`): elevation is written as base64 text (`elev.txt`) because the claude.ai artifact cannot serve binary files; images stay PNG/JPEG; `meta.json` holds the bbox and CRISM geometry the app needs.
 3. **Load** (`app/js/data.js`): decodes `elev.txt` back into a `Float32Array`, reads PNGs into pixel arrays through a canvas, and loads the JSON files.
 4. **Model** (`terrain.js`, `route.js`, `candidates.js`, no DOM): slope (Horn), sand mask (30% coldest THEMIS), radiation (sky-view fraction), walking cost (Tobler), A* legs, Dijkstra return times and CRISM-based suggested stops.
@@ -172,9 +195,9 @@ and `python -m unittest discover -s checks -p test_artifact.py`.
 | `hillshade.jpg` | Same DTM, Hillshade function | Shaded relief |
 | `themis.png` | Mars Trek, `THEMIS_NightIR_ControlledMosaics_100m_v2_oct2018`, zoom 9 | Night thermal and sand |
 | `crism_*.png` | PDS Geosciences, CRISM MTRDR `FRT0000B6F1_07` (HYD, PHY, CAR, TRU browse) | Minerals and suggested points |
-| `traverse.json` | `mars.nasa.gov/mmgis-maps/MSL/Layers/json/MSL_waypoints.json` (inside the map, up to sol 4670) | Curiosity traverse |
+| `traverse.json` | `mars.nasa.gov/mmgis-maps/MSL/Layers/json/MSL_waypoints.json` (inside the map; latest available sols) | Curiosity traverse |
 
-The 6.55 uGy/h dose rate comes from Curiosity RAD (PDS PPI, `MSL-M-RAD-3-RDR-V1.0`, E dose of sols 4669 to 4673).
+The packaged 6.55 uGy/h dose rate comes from Curiosity RAD (PDS PPI, `MSL-M-RAD-3-RDR-V1.0`, E dose of sols 4669 to 4673). On Vercel it is replaced by the value `/api/radiation` computes from the newest sols each time the planner opens or updates.
 
 ## Assumptions and limits
 

@@ -57,6 +57,7 @@ h2 { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spa
 .topbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
 .topbar .sub { color: var(--muted); font-size: 0.85rem; }
 .title-block { display: grid; gap: 2px; min-width: 0; }
+.top-actions { display: flex; align-items: center; gap: 8px; }
 .pill { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 0.78rem; font-weight: 600; padding: 3px 10px; border-radius: 999px; }
 .pill.ok { color: var(--ok); background: var(--ok-bg); }
 .pill.warn { color: var(--warn); background: var(--warn-bg); }

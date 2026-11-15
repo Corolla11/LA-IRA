@@ -1,0 +1,11 @@
+{
+  "framework": null,
+  "buildCommand": "python3 -m venv .venv && .venv/bin/pip install Pillow requests && .venv/bin/python tools/prepare_data.py --body mars && .venv/bin/python tools/build_vercel.py",
+  "outputDirectory": "dist/vercel",
+  "functions": {
+    "api/*.py": {
+      "maxDuration": 60,
+      "includeFiles": "app/bodies/*.json"
+    }
+  }
+}
