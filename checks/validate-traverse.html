@@ -1,0 +1,122 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>running</title>
+<pre id="result">running...</pre>
+<pre id="json"></pre>
+<script type="module">
+// Compares planner routes (A*) with the real Curiosity drive. Run: uv run tools/serve.py 8780, open /checks/validate-traverse.html
+import { loadData } from '../app/js/data.js';
+import { buildTerrain, cellOf } from '../app/js/terrain.js';
+import { astar, segStats, snapCell, straightLine, effective, computeBlock } from '../app/js/route.js';
+import { DEFAULT_PARAMS } from '../app/js/config.js';
+
+var STRETCH_MIN_M = 500, STRETCH_MAX_M = 2000, DS = [25, 50];
+
+function f(x, d) { return isFinite(x) ? x.toFixed(d) : String(x); }
+function pad(x, n) { return String(x).padStart(n); }
+
+(async function () {
+  var out = document.getElementById('result');
+  try {
+    var body = await (await fetch('../app/bodies/mars.json')).json();
+    var raw = await loadData('../app/data/mars/'), grid = buildTerrain(raw, body);
+    var params = Object.assign({}, DEFAULT_PARAMS, { v0: body.v0 });
+    var eff = effective(params); computeBlock(grid, eff);
+    var N = grid.N, dxm = grid.dxm, dym = grid.dym;
+    var X = function (c) { return (c % N) * dxm; }, Y = function (c) { return ((c / N) | 0) * dym; };
+    function gd(a, b) { return Math.hypot(X(a) - X(b), Y(a) - Y(b)); }
+
+    // Step 1: stretches. A point outside the map ends the current run.
+    var stretches = [], run = null, nTrav = raw.trav.length, nIn = 0, insideM = 0;
+    function flush() { run = null; }
+    raw.trav.forEach(function (p) {
+      var c = cellOf(grid, p[1], p[2]);
+      if (c < 0) { flush(); return; }
+      nIn++;
+      if (!run) { run = { pts: [c], sols: [p[0]], len: 0 }; return; }
+      var last = run.pts[run.pts.length - 1];
+      run.len += gd(last, c); insideM += gd(last, c); run.pts.push(c); run.sols.push(p[0]);
+      if (run.len >= STRETCH_MIN_M) {
+        if (run.len <= STRETCH_MAX_M) stretches.push(run);
+        run = { pts: [c], sols: [p[0]], len: 0 };
+      }
+    });
+
+    // Step 2-3 per stretch
+    var rows = [], noPath = 0, skipped = 0;
+    function distToPoly(px, py, pts) {
+      var best = Infinity;
+      for (var q = 0; q + 1 < pts.length; q++) {
+        var ax = X(pts[q]), ay = Y(pts[q]), bx = X(pts[q + 1]), by = Y(pts[q + 1]), dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy;
+        var u = L ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / L)) : 0;
+        best = Math.min(best, Math.hypot(px - ax - u * dx, py - ay - u * dy));
+      }
+      return best;
+    }
+    stretches.forEach(function (st) {
+      var s = snapCell(grid, st.pts[0]).cell, t = snapCell(grid, st.pts[st.pts.length - 1]).cell;
+      if (s === t) { skipped++; return; }
+      var ra = astar(grid, s, t, eff, true);
+      var rd = astar(grid, s, t, eff, false);
+      if (!ra.path) { noPath++; rows.push({ noPath: true, sols: [st.sols[0], st.sols[st.sols.length - 1]], roverM: st.len }); return; }
+      var ss = segStats(grid, ra.path, eff), roverSlope = 0;
+      for (var q = 0; q + 1 < st.pts.length; q++) {
+        var a = st.pts[q], b = st.pts[q + 1], n = Math.max(1, Math.round(Math.max(Math.abs(a % N - b % N), Math.abs(((a / N) | 0) - ((b / N) | 0)))));
+        for (var m = 0; m <= n; m++) {
+          var i = Math.round((a % N) + ((b % N) - (a % N)) * m / n), j = Math.round(((a / N) | 0) + (((b / N) | 0) - ((a / N) | 0)) * m / n);
+          roverSlope = Math.max(roverSlope, grid.SLOPE[j * N + i]);
+        }
+      }
+      var sl = straightLine(grid, { cells: [s, t], seq: [0, 1], eff: eff });
+      var tot = 0, within = [0, 0];
+      for (var k = 1; k < ra.path.length; k++) {
+        var u = ra.path[k - 1], v = ra.path[k], len = gd(u, v);
+        var d = distToPoly((X(u) + X(v)) / 2, (Y(u) + Y(v)) / 2, st.pts);
+        tot += len; DS.forEach(function (D, di) { if (d <= D) within[di] += len; });
+      }
+      rows.push({
+        sols: [st.sols[0], st.sols[st.sols.length - 1]], roverM: st.len, planM: ss.dist, horizM: tot,
+        within25: tot ? within[0] / tot * 100 : 0, within50: tot ? within[1] / tot * 100 : 0, w25m: within[0], w50m: within[1],
+        slopePlan: ss.maxSlope, slopeRover: roverSlope /* rover (interpolated between fixes) */, slopeStraight: sl.maxSlope, straightBlocked: sl.blocked,
+        astar: { expanded: ra.expanded, time: ra.time }, dijkstra: { expanded: rd.expanded, time: rd.time },
+        sameTime: Math.abs(ra.time - rd.time) <= 1e-6 * Math.max(1, Math.abs(rd.time))
+      });
+    });
+
+    var ok = rows.filter(function (r) { return !r.noPath; });
+    var sum = function (key) { return ok.reduce(function (a, r) { return a + key(r); }, 0); };
+    var H = sum(function (r) { return r.horizM; });
+    var total = {
+      trackPoints: nTrav, insideMapM: insideM, keptM: stretches.reduce(function (a, r) { return a + r.len; }, 0), droppedM: insideM - stretches.reduce(function (a, r) { return a + r.len; }, 0), pointsInsideMap: nIn, stretches: rows.length, noPath: noPath, skippedParked: skipped,
+      within25: H ? sum(function (r) { return r.w25m; }) / H * 100 : null, within50: H ? sum(function (r) { return r.w50m; }) / H * 100 : null,
+      roverM: sum(function (r) { return r.roverM; }), planM: sum(function (r) { return r.planM; }),
+      maxSlopePlan: Math.max.apply(null, [0].concat(ok.map(function (r) { return r.slopePlan; }))),
+      maxSlopeRover: Math.max.apply(null, [0].concat(ok.map(function (r) { return r.slopeRover; }))),
+      maxSlopeStraight: Math.max.apply(null, [0].concat(ok.map(function (r) { return r.slopeStraight; }))),
+      straightBlockedStretches: ok.filter(function (r) { return r.straightBlocked; }).length,
+      astarExpanded: sum(function (r) { return r.astar.expanded; }),
+      dijkstraExpanded: sum(function (r) { return r.dijkstra.expanded; }),
+      allSameTime: ok.every(function (r) { return r.sameTime; }), astarNeverMoreExpanded: ok.every(function (r) { return r.astar.expanded <= r.dijkstra.expanded; })
+    };
+
+    var lines = ['  # sols        rover_m  plan_m  %<=25  %<=50  slope plan/rover(interp. between fixes)/straight  blk  A* exp  Dijkstra exp'];
+    rows.forEach(function (r, i) {
+      lines.push(r.noPath ? pad(i + 1, 3) + ' ' + r.sols[0] + '-' + r.sols[1] + '  ' + f(r.roverM, 0) + ' m: no path' :
+        pad(i + 1, 3) + ' ' + (r.sols[0] + '-' + r.sols[1]).padEnd(10) + pad(f(r.roverM, 0), 8) + pad(f(r.planM, 0), 8) + pad(f(r.within25, 1), 7) + pad(f(r.within50, 1), 7) +
+        pad(f(r.slopePlan, 1) + '/' + f(r.slopeRover, 1) + '/' + f(r.slopeStraight, 1), 27) + pad(r.straightBlocked, 5) +
+        pad(r.astar.expanded, 8) + pad(r.dijkstra.expanded, 10));
+    });
+    lines.push('TOTAL ' + f(total.roverM, 0).padStart(14) + pad(f(total.planM, 0), 8) + pad(f(total.within25, 1), 7) + pad(f(total.within50, 1), 7) +
+      pad(f(total.maxSlopePlan, 1) + '/' + f(total.maxSlopeRover, 1) + '/' + f(total.maxSlopeStraight, 1), 27) + pad(total.straightBlockedStretches, 5) +
+      pad(total.astarExpanded, 8) + pad(total.dijkstraExpanded, 10));
+    lines.push('track points ' + nTrav + ', inside map ' + nIn + ', inside-map length ' + f(insideM, 0) + ' m, in stretches ' + f(total.keptM, 0) + ' m, dropped ' + f(total.droppedM, 0) + ' m (runs>2000 m, tails<500 m), stretches ' + rows.length + ', no path ' + noPath + ', parked skipped ' + skipped +
+      ', A*==Dijkstra time ' + total.allSameTime + ', A* expanded<=Dijkstra ' + total.astarNeverMoreExpanded);
+    out.textContent = lines.join('\n');
+    document.getElementById('json').textContent = JSON.stringify({ params: params, stretches: rows, total: total }, null, 1);
+    document.title = 'DONE';
+  } catch (e) {
+    out.textContent = String(e && e.stack || e);
+    document.title = 'ERROR';
+  }
+})();
+</script>
