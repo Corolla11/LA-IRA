@@ -169,7 +169,8 @@ export function runGate(onReady) {
       }
       const reopen = deployment ? takeReopen() : null;
       sel.value = reopen && bodies.some((x) => x.id === reopen.body) ? reopen.body
-        : bodies.some((x) => x.id === 'mars') ? 'mars' : bodies[0].id;
+        : bodies.some((x) => x.id === 'moon') ? 'moon'
+          : bodies.some((x) => x.id === 'mars') ? 'mars' : bodies[0].id;
       await load(sel.value, false);
       if (reopen && reopen.body === sel.value && profile && elevOk()) {
         for (const src of profile.sources) {
