@@ -27,15 +27,14 @@ import argparse
 import base64
 import io
 import json
-import math
 import re
 from concurrent.futures import ThreadPoolExecutor
-from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from urllib.parse import quote
 
 import requests
 from PIL import Image
+from geometry import bbox, bbox_str, crism_crop, ps_6dec, themis_crop, tile_origin
 
 N = 1000  # elevation grid is N x N cells (~2.4 m each over the 2.46 km area); also meta.json "N"
 MAX_SOL = 4670  # reference sol; keep equal to tests/compare_data.py
@@ -43,66 +42,12 @@ MAX_SOL = 4670  # reference sol; keep equal to tests/compare_data.py
 TILES = "https://trek.nasa.gov/tiles/Mars/EQ/"
 # Curiosity waypoints (GeoJSON FeatureCollection; properties sol/lat/lon), grows with every sol
 WAYPOINTS = "https://mars.nasa.gov/mmgis-maps/MSL/Layers/json/MSL_waypoints.json"
-THEMIS_TILE = (9, 269, 902)  # zoom, row, col
 # 1 m Gale DTM (Mars Trek ArcGIS ImageServer); used for elevation (exportImage bsq F32) and hillshade
 IMAGE_SERVER = "https://trek.nasa.gov/mars/trekarcgis/rest/services/Gale_DEM_SMG_1m/ImageServer"
 # CRISM MTRDR browse products of observation FRT0000B6F1 (PDS Geosciences); suffixes: hydj_mtr3.lbl,
 # {phy,hyd,car,tru}j_mtr3.png
 CRISM_BASE = ("https://pds-geosciences.wustl.edu/mro/mro-m-crism-5-rdr-mptargeted-v1/mrocr_4001/"
               "browse/2008/2008_191/frt0000b6f1/frt0000b6f1_07_br")
-
-
-def tile_origin():
-    """(row0, col0) of the 15x15 zoom-16 tile block centred on tile 34518/115554."""
-    return 34518 - 7, 115554 - 7
-
-
-def bbox():
-    """(lonW, latS, lonE, latN) of the map area.
-    Tile grid: column = floor((lon+180)/360 * 2^(z+1)), row = floor((90-lat)/180 * 2^z); at z=16 one tile
-    spans 180/2^16 degrees both ways, so the 15x15 block edges are exact binary fractions."""
-    d16 = 180 / 2 ** 16
-    row0, col0 = tile_origin()
-    return (col0 * d16 - 180, 90 - (row0 + 15) * d16, (col0 + 15) * d16 - 180, 90 - row0 * d16)
-
-
-def ps_num(v):
-    """Format like Windows PowerShell 5.1: 15 significant digits, ties rounded away from zero
-    (Python's '.15g' rounds ties to even: 137.4005126953125 -> ...312 instead of ...313)."""
-    d = Decimal(v)
-    q = Decimal(1).scaleb(d.adjusted() - 14)
-    return format(d.quantize(q, rounding=ROUND_HALF_UP).normalize(), "f")
-
-
-def bbox_str():
-    """bbox as 'lonW,latS,lonE,latN' for the ImageServer 'bbox' parameter, via ps_num so the request
-    URL (and therefore the returned elevation bytes) matches the original PowerShell pipeline."""
-    return ",".join(ps_num(v) for v in bbox())
-
-
-def themis_crop(lonW, lonE, latN):
-    """(x0, y0, size) in pixels of THEMIS tile 9/269/902 covering the map bbox (expected 182, 158, 30).
-    A zoom-9 tile spans 180/512 degrees over 256 px (px = degrees per pixel, ~0.00137 deg ~ 100 m).
-    Offsets are measured from the tile's west edge (lon = tcol*180/512 - 180) and north edge
-    (lat = 90 - trow*180/512); the crop is square, sized from the longitude span."""
-    _, trow, tcol = THEMIS_TILE
-    px = (180 / 512) / 256
-    x0 = round((lonW + 180 - tcol * (180 / 512)) / px)
-    y0 = round((90 - latN - trow * (180 / 512)) / px)
-    return x0, y0, round((lonE - lonW) / px)
-
-
-def crism_crop(lonW, lonE, latN, latS, res, cW, cN):
-    """(x0, y0, w, h) of the CRISM browse crop (expected w = h = 137).
-    The browse PNGs are equirectangular: res pixels per degree (3293.04), top-left corner at
-    (cW = WESTERNMOST_LONGITUDE, cN = MAXIMUM_LATITUDE). Pixel = (lon - cW)*res, (cN - lat)*res.
-    The crop is floor/ceil-rounded outwards so it fully covers the bbox; build_meta() then records the
-    real (slightly larger) bounds of the crop so the app can place the overlay exactly."""
-    x0 = math.floor((lonW - cW) * res)
-    x1 = math.ceil((lonE - cW) * res)
-    y0 = math.floor((cN - latN) * res)
-    y1 = math.ceil((cN - latS) * res)
-    return x0, y0, x1 - x0, y1 - y0
 
 
 def fetch_crism_label():
@@ -123,8 +68,13 @@ def build_meta(res, cW, cN):
     x0, y0, w, h = crism_crop(lonW, lonE, latN, latS, res, cW, cN)
     crism = {"product": "FRT0000B6F1_07 MTRDR", "lonW": cW + x0 / res, "lonE": cW + (x0 + w) / res,
              "latN": cN - y0 / res, "latS": cN - (y0 + h) / res, "w": w, "h": h}
-    return {"lonW": lonW, "lonE": lonE, "latN": latN, "latS": latS, "N": N,
-            "themisSize": themis_crop(lonW, lonE, latN)[2], "crism": crism}
+    return {"schema": 1, "body": {"name": "Mars", "radius": 3396190}, "name": "Mount Sharp, Gale crater",
+            "lonW": lonW, "lonE": lonE, "latN": latN, "latS": latS, "N": N,
+            "themisSize": themis_crop(lonW, lonE, latN)[2], "crism": crism,
+            "layers": {"image": "hirise.jpg", "hillshade": "hillshade.jpg", "thermal": "themis.png",
+                       "traverse": "traverse.json", "crism": {k: f"crism_{k}.png" for k in ("phy", "hyd", "car", "tru")}},
+            "radiation": {"rate": 6.55, "lat": -4.8082, "lng": 137.3811},
+            "example": "gale"}
 
 
 def step_elev(out):
@@ -203,12 +153,6 @@ def step_themis(out):
     x0, y0, w = themis_crop(lonW, lonE, latN)
     tile = get_image(TILES + "THEMIS_NightIR_ControlledMosaics_100m_v2_oct2018/1.0.0/default/default028mm/9/269/902.png")
     tile.convert("RGBA").crop((x0, y0, x0 + w, y0 + w)).save(out / "themis.png")
-
-
-def ps_6dec(v):
-    """Like .NET ToString('0.######'): 6 decimals, no trailing zeros."""
-    s = format(Decimal(ps_num(v)).quantize(Decimal("1e-6"), rounding=ROUND_HALF_UP), "f").rstrip("0").rstrip(".")
-    return "0" if s in ("", "-0") else s
 
 
 def step_traverse(out):

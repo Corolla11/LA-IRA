@@ -35,14 +35,15 @@ function onDrag(pi, ll) {
 // Only runs when geometry or limits change; a new call cancels the previous one
 async function plan() {
   var token = ++runToken;
+  try {
   setStatus('Calculating route…', 'info');
   $('#feasible').className = 'pill info'; $('#feasible').textContent = 'Calculating…';
   var P = await planRoute(grid, [state.habitat].concat(state.stops), state.p, cache, function (n) {
-    setStatus('A*: segment ' + n, 'info'); return token === runToken;
+    setStatus($('#pAlgorithm').selectedOptions[0].textContent + ': segment ' + n, 'info'); return token === runToken;
   });
   if (!P || token !== runToken) return;
   lastPlan = P;
-  $('#astarInfo').textContent = 'A*: ' + P.runsNew + ' segment(s) computed now (' + nf(P.expandedNew) + ' cells expanded), ' + P.runsCached + ' reused from cache.';
+  $('#astarInfo').textContent = $('#pAlgorithm').selectedOptions[0].textContent + ': ' + P.runsNew + ' segment(s) computed now (' + nf(P.expandedNew) + ' cells expanded), ' + P.runsCached + ' reused from cache.';
   renderSlope(grid, P.eff);
   drawRoute();
   renderSegments(P);
@@ -62,13 +63,21 @@ async function plan() {
   }
   refresh();
   setStatus('Route calculated', 'ok');
+  } catch (err) {
+    if (token !== runToken) return;
+    console.error(err);
+    setStatus('Route calculation failed', 'bad');
+    $('#readout').textContent = 'Route calculation failed: ' + err.message;
+  }
 }
 
 function setMode(m) {
   state.mode = m; setModeUI(m); setCursor(m ? 'crosshair' : '');
 }
 function defaults() {
-  state.habitat = Object.assign({ name: 'Habitat' }, pxToLL(grid, HAB_PX[0], HAB_PX[1]));
+  var pos = grid.meta.example === 'gale' ? pxToLL(grid, HAB_PX[0], HAB_PX[1]) :
+    { lat: (grid.meta.latN + grid.meta.latS) / 2, lng: (grid.meta.lonW + grid.meta.lonE) / 2 };
+  state.habitat = Object.assign({ name: 'Habitat' }, pos);
   state.stops = CANDS.slice(0, 4).map(function (c) { return Object.assign({}, c, { work: state.p.work }); });
 }
 
@@ -76,7 +85,8 @@ function onMove(ll) {
   var c = cellOf(grid, ll.lat, ll.lng);
   if (c < 0) return;
   var txt = ll.lat.toFixed(5) + ', ' + ll.lng.toFixed(5) + ' · elev ' + nf(grid.ELEV[c]) + ' m · slope ' + nf(grid.SLOPE[c], 1) + '°' +
-    (grid.SAND[c] ? ' · sand' : ' · rock') + ' · dose ~' + nf(doseAt(grid, c), 2) + ' µGy/h';
+    (grid.SAND ? (grid.SAND[c] ? ' · estimated sand' : ' · not classified as sand') : ' · terrain type unavailable') +
+    (grid.DOSE ? ' · dose ~' + nf(doseAt(grid, c), 2) + ' µGy/h' : ' · dose unavailable');
   if (retMap && isFinite(retMap.T[c])) txt += ' · return ' + fmtMin(retMap.T[c]);
   $('#readout').textContent = txt;
 }
@@ -97,7 +107,7 @@ function onClick(ll) {
 window.evaDebug = function () {
   if (!lastPlan) return null;
   return {
-    points: lastPlan.pts.map(function (p, i) { var c = lastPlan.cells[i]; return { name: p.name, minutes: p.work, slope: c >= 0 ? +grid.SLOPE[c].toFixed(1) : null, dose: c >= 0 ? +doseAt(grid, c).toFixed(2) : null }; }),
+    points: lastPlan.pts.map(function (p, i) { var c = lastPlan.cells[i], dose = doseAt(grid, c); return { name: p.name, minutes: p.work, slope: c >= 0 ? +grid.SLOPE[c].toFixed(1) : null, dose: dose === null ? null : +dose.toFixed(2) }; }),
     candidates: CANDS.map(function (c) { return c.name + ' (' + c.lat.toFixed(4) + ', ' + c.lng.toFixed(4) + ')'; }),
     dose_min_max: [grid.doseMin, grid.doseMax],
     matrix_min: lastPlan.M.map(function (row) { return row.map(function (r) { return r ? (isFinite(r.time) ? Math.round(r.time / 60) : 'X') : '-'; }); })
@@ -110,10 +120,17 @@ async function start() {
     grid = buildTerrain(raw);
   } catch (err) {
     setStatus('Error loading data', 'bad');
-    $('#readout').textContent = 'Could not load the data/ folder. Open the page through a server, not directly from the file.';
+    console.error(err);
+    $('#readout').textContent = 'Could not load data: ' + err.message;
     return;
   }
-  setRadRange(grid.doseMin, grid.doseMax);
+  if (grid.DOSE) { setRadRange(grid.doseMin, grid.doseMax); $('#radRef').textContent = nf(grid.meta.radiation.rate, 2) + ' reference'; }
+  else $('#radRef').textContent = 'unavailable';
+  document.querySelector('.sub').textContent = (grid.meta.name || 'Exploration area') + ' · ' + grid.meta.body.name;
+  if (grid.meta.example !== 'gale') {
+    $('#galeSources').hidden = true;
+    $('#candidateNote').textContent = 'Mark points on the map. No suggested points were supplied.';
+  }
   setSolRange(raw.trav);
   CANDS = buildCandidates(grid, raw.crism);
   initMap(grid, raw.trav, raw.crism, { onMove: onMove, onClick: onClick });

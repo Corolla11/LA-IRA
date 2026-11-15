@@ -6,7 +6,7 @@
 <style>:root{padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}body{margin:0}</style>
 </head>
 <body>
-<title>Boxwork EVA Planner</title>
+<title>A-IRA EVA Planner</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -16,7 +16,7 @@
 <div class="app">
   <header class="topbar">
     <div class="title-block">
-      <h1>Boxwork EVA Planner</h1>
+      <h1>A-IRA EVA Planner</h1>
       <span class="sub">Mount Sharp, Gale crater · 2.46 × 2.46 km area · NASA data (HiRISE, DTM, CRISM, THEMIS, RAD)</span>
     </div>
     <span id="status" class="pill info">Loading data…</span>
@@ -63,7 +63,7 @@
           <output id="poiCount" aria-live="polite">–</output>
           <button type="button" class="sq" id="poiPlus" aria-label="Add the next suggested point">+</button>
         </div>
-        <p class="note">The "+" adds the next suggested point: HiRISE and Curiosity targets first, then the strongest CRISM sulfate signals. Maximum of 6.</p>
+        <p class="note" id="candidateNote">The "+" adds the next suggested point: HiRISE and Curiosity targets first, then the strongest CRISM sulfate signals. Maximum of 6.</p>
         <ul class="stops" id="stopList"></ul>
         <div class="btns">
           <button type="button" id="btnAdd" aria-pressed="false">Mark point on map</button>
@@ -107,7 +107,7 @@
             <p class="note" id="crismLegend"></p>
           </div>
           <div class="layer-item">
-            <label class="check"><input type="checkbox" id="lRad"> Estimated radiation (RAD + terrain)</label>
+            <label class="check"><input type="checkbox" id="lRad"> Estimated radiation (reference + terrain)</label>
             <div class="ramp rad" aria-hidden="true"></div>
             <div class="ramp-labels"><span id="radMin">–</span><span id="radRef">6.55 measured</span><span id="radMax">–</span></div>
             <p class="note">µGy/h. Blue: terrain blocks part of the sky (natural shelter). Red: more open sky.</p>
@@ -117,9 +117,9 @@
             <div class="ramp themis" aria-hidden="true"></div>
             <div class="ramp-labels"><span>colder: sand, dust</span><span>warmer: rock</span></div>
           </div>
-          <label class="check"><input type="checkbox" id="lHill"> Hillshade (DTM 1 m)</label>
+          <label class="check"><input type="checkbox" id="lHill"> Hillshade</label>
           <label class="check"><input type="checkbox" id="lRet"> Return time to habitat (30 / 60 / 90 min)</label>
-          <label class="check"><input type="checkbox" id="lTrav" checked> Actual Curiosity traverse</label>
+          <label class="check"><input type="checkbox" id="lTrav" checked> Traverse</label>
         </div>
       </section>
 
@@ -127,6 +127,8 @@
       <section class="card" aria-labelledby="h-param">
         <div class="card-head"><h2 id="h-param">Parameters (assumptions)</h2></div>
         <div class="params">
+          <label for="pAlgorithm">Routing algorithm</label>
+          <select id="pAlgorithm"><option value="astar">A*</option><option value="dijkstra">Dijkstra</option><option value="dstar-lite">D* Lite</option></select>
           <div class="param"><label for="pEva">EVA duration</label><output id="oEva" for="pEva"></output><input type="range" id="pEva" min="1" max="8" step="0.5" value="6"></div>
           <div class="param"><label for="pRes">Safety reserve</label><output id="oRes" for="pRes"></output><input type="range" id="pRes" min="0" max="50" step="5" value="30"></div>
           <div class="param"><label for="pWork">Default time per stop (applies to all)</label><output id="oWork" for="pWork"></output><input type="range" id="pWork" min="0" max="90" step="5" value="20"></div>
@@ -137,10 +139,10 @@
           <label class="check"><input type="checkbox" id="pCarry"> Carrying equipment (limits −5°, speed ×0.8)</label>
           <label class="check"><input type="checkbox" id="pOpt" checked> Optimize stop order</label>
         </div>
-        <p class="note">Duration, reserve and stop time update instantly. Speed, slopes and sand change the route and rerun A*.</p>
+        <p class="note">Duration, reserve and stop time update instantly. Routing parameters or algorithm changes recompute the route. D* Lite currently starts a fresh search for each leg.</p>
       </section>
 
-      <section class="card" aria-labelledby="h-sources">
+      <section class="card" id="galeSources" aria-labelledby="h-sources">
         <div class="card-head"><h2 id="h-sources">Sources and limits</h2></div>
         <ul class="sources">
           <li>Image: HiRISE <span class="mono">curiosity_hirise_mosaic</span>, zoom 16, NASA Mars Trek.</li>
