@@ -186,44 +186,87 @@ The routing cost model is separated into `cost-model.js`; the reusable search
 workspace is in `grid-workspace.js` and D* Lite is in `dstar-lite.js`.
 `route.js` orchestrates leg searches, stop ordering and the timeline.
 
-## Technical and mathematical model
+## Technical model: what the code calculates
 
-The planner treats the elevation raster as an 8-connected grid. A 3 × 3 Horn
-gradient estimates terrain slope at each cell:
+This section describes the current implementation in `app/js/`; it does not
+describe a complete astronaut-survival model.
 
-```text
-theta_deg = atan(sqrt(gx^2 + gy^2)) * 180 / pi
-```
+### Terrain, movement and route
 
-For a step with horizontal length `d` and elevation change `dz`, its along-track
-grade is `s = dz / d`. The adapted Tobler model estimates speed in m/s:
+- `terrain.js` estimates slope from the elevation grid with a 3 × 3 Horn
+  stencil: $\theta=\arctan(\sqrt{g_x^2+g_y^2})\cdot180/\pi$, where
+  $g_x,g_y$ are the local elevation gradients. `cost-model.js` blocks a step
+  if the destination cell, uphill/downhill grade or cross-slope exceeds its
+  limit.
+- The default limits are 25° along the route and 20° across it. Above 15°,
+  walking time receives an extra penalty. A cell classified as sand gets the
+  adjustable sand multiplier (1.5 by default). These are assumptions, not
+  measured suit-performance values.
+- For one grid step, $d$ is horizontal distance in metres, $\Delta z$ is
+  elevation change in metres, and $s=\Delta z/d$ is the signed grade. The
+  adapted Tobler formula estimates speed and step time:
 
-```text
-v(s) = (v0 / 3.6) * exp(-3.5 * abs(s + 0.05) + 0.175)
-t_step = sqrt(d^2 + dz^2) / v(s)
-```
+$$
+\begin{aligned}
+v(s) &= \frac{v_0}{3.6}
+\exp\!\left(-3.5\left|s+0.05\right|+0.175\right),\\
+t_{\text{step}} &=
+\frac{\sqrt{d^2+(\Delta z)^2}}{v(s)}
+\cdot P_\theta\cdot P_{\text{sand}}
+\end{aligned}
+$$
 
-Moves are rejected when terrain, along-track slope or cross-slope exceed their
-limits. Above 15° local slope, travel time is multiplied by
-`1 + 2 * (theta_deg - 15) / 10`; cells classified as sand receive the configured
-sand multiplier. Carrying a load reduces base speed by 20% and tightens both
-slope limits by 5°. These are planning assumptions, not suit-performance
-measurements.
+Here $v_0$ is the profile's base speed in km/h; division by 3.6 converts it
+to m/s. The code sets $P_\theta=1$ up to 15°, then increases it as
+$1+2(\theta-15^\circ)/10^\circ$; $P_{\text{sand}}$ is the configured
+multiplier in sand cells and 1 elsewhere (1.5 by default). Carrying a load
+reduces base speed by 20% and tightens both slope limits by 5°. This is a
+planning model, not a calibrated prediction of an astronaut's walking speed.
 
-A* is the default leg search; Dijkstra and D* Lite are also available. A*
-uses straight-line distance divided by the maximum Tobler speed as an
-admissible heuristic. The planner tests visit orders for up to six reachable
-stops and minimizes total travel time, then adds stop-work durations to the
-timeline. A reverse-edge Dijkstra search computes return time from every cell
-to the habitat. The reserve budget is
-`EVA duration * (1 - reserve percentage / 100)`.
+The grid has eight possible neighbor steps. A* is the default pathfinder;
+Dijkstra and D* Lite are alternatives. The planner can try visit orders for up
+to six reachable stops and selects the order with the least total travel time.
+It then adds the chosen stop-work durations. A reverse-direction Dijkstra run
+calculates travel time back to the habitat from each cell.
 
-The radiation estimate scales the RAD reference rate by relative sky visibility:
-`dose(cell) = RAD rate * SVF(cell) / SVF(reference)`. `SVF` averages
-`1 / (1 + horizon_tangent^2)` over 16 directions, scanning up to 40 steps on a
-coarser 250 × 250 elevation grid. Route dose is the sum of local dose rate
-multiplied by time spent in each cell, including work stops. It is an estimate,
-not a full radiation-transport model.
+### EVA time budget
+
+The code adds travel time and stop-work time, then compares the total with the
+EVA duration after reserving the configured percentage:
+
+$$
+\begin{aligned}
+T_{\text{plan}} &= T_{\text{travel}}+60W,\\
+T_{\text{budget}} &= T_{\text{EVA}}\left(1-\frac{r}{100}\right),\\
+\text{slack} &= T_{\text{budget}}-T_{\text{plan}}.
+\end{aligned}
+$$
+
+Times in these equations are seconds, except $W$, which is the total
+stop-work time in minutes; $r$ is the reserve percentage. The app shows time
+and reserve warnings, but does not calculate oxygen consumption.
+
+### Radiation estimate
+
+When a RAD reference is available, the code estimates each cell's dose rate by
+scaling the reference according to terrain visibility. It computes visibility
+from the terrain in 16 directions, looking up to 40 cells out on a
+lower-resolution grid:
+
+$$
+\dot D(c)=R_{\text{RAD}}
+\frac{\operatorname{SVF}(c)}{\operatorname{SVF}(c_{\text{ref}})},
+\qquad
+D_{\text{route}}=\sum_i\dot D(c_i)\frac{\Delta t_i}{3600}
++\sum_k\dot D(p_k)\frac{w_k}{60}.
+$$
+
+$\dot D$ is dose rate in $\mu\text{Gy}/\text{h}$; travel durations
+$\Delta t_i$ are in seconds and stop durations $w_k$ are in minutes, so
+$D_{\text{route}}$ is in $\mu\text{Gy}$. This is an estimate, not a
+radiation-transport simulation. The code does not model dust storms, solar
+particle events, oxygen use, or a single overall survival score or GO/NO-GO
+verdict.
 
 Focused checks: `node --experimental-default-type=module --test checks/routing.test.js`
 and `python -m unittest discover -s checks -p test_artifact.py`.
