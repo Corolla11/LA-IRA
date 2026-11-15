@@ -11,6 +11,11 @@ from typing import TypedDict, TypeGuard, cast
 
 ROOT = Path(__file__).resolve().parent.parent
 
+if __package__ == "tools":
+    from . import adapters
+else:
+    import adapters
+
 type LayerFile = str | list[str] | None
 
 
@@ -116,6 +121,7 @@ def build(app: Path = ROOT / "app", out: Path = ROOT / "dist" / "vercel") -> lis
         layers = _package_layers(data)
         if not layers["elevation"]:
             continue
+        adapters.write_status(data, body_id, checked=False)
         profile = _read_json_object(app / "bodies" / f"{body_id}.json")
         name = profile.get("name")
         if not isinstance(name, str):

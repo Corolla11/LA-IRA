@@ -3,9 +3,8 @@
  *
  * Input : base URL of the data folder ('data/' for the app, '../app/data/' for tests); optional resolve(name) from cache.js.
  * Output: loadData(base, layers, liveBody, resolve) resolves to { meta, elev, trav, themis, crism, fallbacks }.
- *         With liveBody (a live deployment) each layer is requested from /api/layer, /api/traverse and /api/radiation
- *         every time the planner opens or is updated, and the packaged files below are the fallback (listed in
- *         `fallbacks`).
+ *         With liveBody, data is requested from /api/layer, /api/traverse and /api/radiation. Deployed startup uses
+ *         the package and browser cache; refresh.js checks for newer versions in the background.
  * Used by: main.js (start) and tests/route.test.html. terrain.js turns the result into the grid.
  *
  * Files fetched from app/data (all produced by tools/prepare_data.py, never edited by hand):
@@ -47,13 +46,21 @@ function floatsFrom(buffer, N) {
 }
 
 // resolve(name) -> url (cache.js object URLs); without it packaged files come from base + name
-export async function loadData(base, selectedLayers, liveBody, resolve) {
+export async function loadData(base, selectedLayers, liveBody, resolve, persist) {
   base = base || 'data/';
   var file = function (name) { return resolve ? resolve(name) : base + name; };
   async function get(name) {
-    var response = await fetch(file(name));
+    var url = file(name), response = await fetch(url);
     if (!response.ok) throw new Error('Cannot load ' + name + ': HTTP ' + response.status);
+    if (persist && url.indexOf('blob:') !== 0) persist(name, response.clone());
     return response;
+  }
+  function rememberUrl(name, url) {
+    if (!persist || url.indexOf('blob:') === 0) return;
+    fetch(url).then(function (response) {
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      return persist(name, response);
+    }).catch(function (err) { console.warn('cache copy failed for ' + name, err); });
   }
   var meta = await (await get('meta.json')).json();
   if (meta.schema !== 1 || !meta.body || typeof meta.body.name !== 'string' ||
@@ -109,7 +116,9 @@ export async function loadData(base, selectedLayers, liveBody, resolve) {
       return { url: url, image: await loadImage(url) };
     }, async function () {
       var url = file(packaged);
-      return { url: url, image: await loadImage(url) };
+      var image = await loadImage(url);
+      rememberUrl(packaged, url);
+      return { url: url, image: image };
     });
   }
   // Map overlays (HiRISE, hillshade) are not awaited: Leaflet loads them itself and map.js switches to the
@@ -122,8 +131,18 @@ export async function loadData(base, selectedLayers, liveBody, resolve) {
     elev: fresh('elevation', async function () {
       return floatsFrom(await fetchLive(layerUrl('elevation'), 'buffer'), meta.N);
     }, async function () {
-      var bin = atob((await (await get('elev.txt')).text()).trim()), raw = new Uint8Array(bin.length);
-      for (var bi = 0; bi < bin.length; bi++) raw[bi] = bin.charCodeAt(bi);
+      var response = await get('elev.txt'), buffer;
+      if (response.arrayBuffer) buffer = await response.arrayBuffer();
+      else {
+        var bin = atob((await response.text()).trim()), encoded = new Uint8Array(bin.length);
+        for (var bi = 0; bi < bin.length; bi++) encoded[bi] = bin.charCodeAt(bi);
+        return floatsFrom(encoded.buffer, meta.N);
+      }
+      if (buffer.byteLength === meta.N * meta.N * 4) return floatsFrom(buffer, meta.N);
+      var text = new TextDecoder().decode(buffer).trim(), decoded;
+      try { decoded = atob(text); } catch (e) { return floatsFrom(buffer, meta.N); }
+      var raw = new Uint8Array(decoded.length);
+      for (var i = 0; i < decoded.length; i++) raw[i] = decoded.charCodeAt(i);
       return floatsFrom(raw.buffer, meta.N);
     }),
     image: layers.image ? overlay('optical', layers.image) : null,

@@ -3,6 +3,11 @@ from typing import TypeGuard, cast
 
 import requests
 
+if __package__ == "tools":
+    from .geometry import ps_6dec
+else:
+    from geometry import ps_6dec
+
 WAYPOINTS_URL = "https://mars.nasa.gov/mmgis-maps/MSL/Layers/json/MSL_waypoints.json"
 
 
@@ -53,3 +58,9 @@ def latest_traverse(lon_w: float, lat_s: float, lon_e: float, lat_n: float) -> l
         key=lambda point: point[0],
     )
     return [[sol, lat, lon] for sol, lat, lon in points]
+
+
+def format_traverse(points: list[list[int | float]]) -> bytes:
+    """Serialize waypoints in the stable package format used for hash comparisons."""
+    text = "[" + ",".join(f"[{sol},{ps_6dec(lat)},{ps_6dec(lon)}]" for sol, lat, lon in points) + "]\n"
+    return text.encode()

@@ -43,12 +43,13 @@ function colorizeThemis(tv, S) {
 // base = package folder of the body, e.g. 'data/moon/'
 // resolve(name) -> url (optional, from cache.js)
 // source = { url, snapshot } in live deployments (live image, packaged file used if it fails to load), else undefined
-function overlayImage(source, packaged, bounds, options) {
+function overlayImage(source, packaged, bounds, options, cacheUrl, name) {
   var overlay = L.imageOverlay(source ? source.url : packaged, bounds, options);
   if (source && source.snapshot) overlay.once('error', function () { overlay.setUrl(source.snapshot); });
+  if (!source && cacheUrl) overlay.once('load', function () { cacheUrl(name, packaged); });
   return overlay;
 }
-export function initMap(grid, trav, crism, handlers, base, resolve) {
+export function initMap(grid, trav, crism, handlers, base, resolve, cacheUrl) {
   var META = grid.meta;
   base = base || 'data/';
   var url = function (name) { return resolve ? resolve(name) : base + name; };
@@ -63,7 +64,8 @@ export function initMap(grid, trav, crism, handlers, base, resolve) {
   map.createPane('routes').style.zIndex = 450;
 
   var available = META.layers || {};
-  if (available.image) layers.hirise = overlayImage(META.urls && META.urls.image, url(available.image), bounds).addTo(map);
+  if (available.image) layers.hirise = overlayImage(META.urls && META.urls.image, url(available.image), bounds,
+    null, cacheUrl, available.image).addTo(map);
   else {
     var cv = document.createElement('canvas'); cv.width = grid.N; cv.height = grid.N;
     var cx = cv.getContext('2d'), pixels = cx.createImageData(grid.N, grid.N), min = Infinity, max = -Infinity;
@@ -72,7 +74,8 @@ export function initMap(grid, trav, crism, handlers, base, resolve) {
     cx.putImageData(pixels, 0, 0);
     layers.hirise = L.imageOverlay(cv.toDataURL(), bounds).addTo(map);
   }
-  if (available.hillshade) layers.hill = overlayImage(META.urls && META.urls.hillshade, url(available.hillshade), bounds, { opacity: 0.5, pane: 'ovl' });
+  if (available.hillshade) layers.hill = overlayImage(META.urls && META.urls.hillshade, url(available.hillshade), bounds,
+    { opacity: 0.5, pane: 'ovl' }, cacheUrl, available.hillshade);
   layers.slope = null; layers.ret = null; layers.crism = null; layers.rad = null; layers.themis = null;
   layers.route = L.layerGroup().addTo(map);
 

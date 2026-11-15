@@ -1,3 +1,4 @@
+import hashlib
 import json
 import tempfile
 import unittest
@@ -19,7 +20,7 @@ class VercelBuildTest(unittest.TestCase):
             (app / "bodies" / "mars.json").write_text('{"name":"Mars"}', encoding="utf-8")
             (body_data / "elev.txt").write_text("AAAAAA==", encoding="ascii")
             (body_data / "map.jpg").write_bytes(b"image")
-            meta: dict[str, object] = {"schema": 1, "layers": {"image": "map.jpg"}}
+            meta: dict[str, object] = {"schema": 1, "N": 1, "layers": {"image": "map.jpg"}}
             (body_data / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
 
             out = root / "dist"
@@ -30,6 +31,10 @@ class VercelBuildTest(unittest.TestCase):
             self.assertTrue(deployment["bodies"][0]["layers"]["optical"])
             self.assertFalse(deployment["bodies"][0]["layers"]["thermal"])
             self.assertTrue((out / "data" / "mars" / "elev.txt").is_file())
+            status = json.loads((out / "data" / "mars" / "status.json").read_text(encoding="utf-8"))
+            self.assertEqual(set(status["files"]), {"elev.txt", "meta.json", "map.jpg"})
+            self.assertEqual(status["files"]["elev.txt"]["size"], 4)
+            self.assertEqual(status["files"]["elev.txt"]["sha256"], hashlib.sha256(bytes(4)).hexdigest())
             self.assertTrue((out / "index.html").is_file())
 
 

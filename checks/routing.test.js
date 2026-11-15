@@ -84,6 +84,35 @@ test('loader accepts a topography-only package and rejects invalid elevation', a
   } finally { globalThis.fetch = oldFetch; }
 });
 
+test('loader accepts elevation stored as raw bytes in the browser cache', async () => {
+  const meta = { schema: 1, body: { name: 'Moon', radius: 1737400 }, N: 2,
+    lonW: 0, lonE: 1, latS: 0, latN: 1 };
+  const bytes = new Uint8Array(16), view = new DataView(bytes.buffer), oldFetch = globalThis.fetch;
+  for (let i = 0; i < 4; i++) view.setFloat32(i * 4, i + 1, true);
+  globalThis.fetch = async url => url === 'data/meta.json'
+    ? { ok: true, json: async () => meta }
+    : { ok: true, arrayBuffer: async () => bytes.buffer };
+  try {
+    const data = await loadData('data/');
+    assert.deepEqual(Array.from(data.elev), [1, 2, 3, 4]);
+  } finally { globalThis.fetch = oldFetch; }
+});
+
+test('loader does not persist cached blobs under the deployed package hash', async () => {
+  const meta = { schema: 1, body: { name: 'Moon', radius: 1737400 }, N: 2,
+    lonW: 0, lonE: 1, latS: 0, latN: 1 };
+  const urls = {
+    'meta.json': URL.createObjectURL(new Blob([JSON.stringify(meta)])),
+    'elev.txt': URL.createObjectURL(new Blob([new Uint8Array(16)]))
+  };
+  const persisted = [];
+  try {
+    const data = await loadData('data/', null, null, name => urls[name], name => persisted.push(name));
+    assert.equal(data.elev.length, 4);
+    assert.deepEqual(persisted, []);
+  } finally { Object.values(urls).forEach(url => URL.revokeObjectURL(url)); }
+});
+
 test('loader only uses layers selected for the deployment', async () => {
   const meta = {
     schema: 1, body: { name: 'Mars', radius: 3396190 }, N: 2,
