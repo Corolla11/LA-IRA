@@ -7,8 +7,10 @@
  */
 import { MAX_STOPS } from './config.js';
 import { doseAt } from './terrain.js';
-import { schedule } from './route.js';
+import { schedule, straightLine } from './route.js';
 import { tok } from './map.js';
+
+var SLACK_CAUTION_MIN = 15;   // lead's call: below this slack the verdict is CAUTION
 
 export var $ = function (s) { return document.querySelector(s); };
 export function nf(x, d) { return Number(x).toLocaleString('en-US', { minimumFractionDigits: d || 0, maximumFractionDigits: d || 0 }); }
@@ -67,6 +69,10 @@ export function refreshTimes(grid, P, p, retMap, stops, cands, act) {
   $('#sClimb').textContent = sc.missing ? '–' : nf(climb) + ' / ' + nf(desc) + ' m';
   $('#sMaxSlope').textContent = sc.missing ? '–' : nf(maxSl, 1) + '°';
   $('#sDose').textContent = sc.missing || sc.dose === null ? 'unavailable' : nf(sc.dose, 1) + ' µGy';
+  var sl2 = sc.missing || P.seq.length < 2 ? null : straightLine(grid, P), routeT = 0;
+  P.segs.forEach(function (sg) { if (sg.res) routeT += sg.res.time; });
+  $('#sStraight').textContent = !sl2 ? '–' : sl2.blocked ? 'crosses ' + nf(sl2.blocked) + ' blocked cells, max ' + nf(sl2.maxSlope, 0) + '° (not walkable)'
+    : fmtMin(sl2.time) + ', max ' + nf(sl2.maxSlope, 0) + '° (route ' + fmtMin(routeT) + ')';
 
   var worst = -1;
   if (retMap) P.segs.forEach(function (sg) { if (sg.res && sg.res.path) sg.res.path.forEach(function (c) { var t = retMap.T[c]; if (isFinite(t) && t > worst) worst = t; }); });
@@ -89,14 +95,22 @@ export function refreshTimes(grid, P, p, retMap, stops, cands, act) {
 
   renderStops(P, sc, act);
 
-  var f = $('#feasible'), nu = P.unreach.length;
-  if (sc.missing) { f.className = 'pill bad'; f.textContent = 'Segment without path'; }
-  else if (nStops === 0) { f.className = 'pill warn'; f.textContent = 'No reachable stop'; }
-  else if (sc.total > evaS) { f.className = 'pill bad'; f.textContent = 'Exceeds EVA duration'; }
-  else if (sc.total > budget) { f.className = 'pill bad'; f.textContent = 'Uses up the reserve'; }
-  else if (nu > 0) { f.className = 'pill warn'; f.textContent = 'Feasible without ' + nu + (nu > 1 ? ' points' : ' point'); }
-  else if (!grid.SAND || !grid.DOSE) { f.className = 'pill warn'; f.textContent = 'Within time budget; data incomplete'; }
-  else { f.className = 'pill ok'; f.textContent = 'Feasible'; }
+  var f = $('#feasible'), nu = P.unreach.length, nogo = [], caution = [], cs = 0;
+  if (sc.missing) nogo.push('segment without path');
+  var noStops = nStops === 0 && nu === 0;   // nothing requested: not a NO-GO
+  if (nStops === 0 && nu > 0) nogo.push('no reachable stop');
+  if (!sc.missing && sc.total > evaS) nogo.push('exceeds EVA by ' + fmtMin(sc.total - evaS));
+  else if (!sc.missing && sc.total > budget) nogo.push('eats reserve by ' + fmtMin(sc.total - budget));
+  if (!sc.missing && sc.total <= budget && slack < SLACK_CAUTION_MIN * 60) caution.push('slack ' + fmtMin(slack));
+  if (nu > 0) caution.push(nu + ' unreachable point' + (nu > 1 ? 's' : '') + ' dropped');
+  P.segs.forEach(function (sg) { if (sg.stats && sg.stats.caution > 0) cs += sg.stats.caution; });
+  if (cs > 0) caution.push('crosses slope > 15° for ' + nf(cs) + ' m');
+  if (!grid.SAND || !grid.DOSE) caution.push((grid.SAND ? '' : 'SAND') + (!grid.SAND && !grid.DOSE ? ' and ' : '') + (grid.DOSE ? '' : 'DOSE') + ' data missing');
+  if (noStops && !nogo.length) { f.className = 'pill warn'; f.textContent = 'Add a stop to plan'; }
+  else if (nogo.length) { f.className = 'pill bad'; f.textContent = 'NO-GO · ' + nogo[0]; }
+  else if (caution.length) { f.className = 'pill warn'; f.textContent = 'CAUTION · ' + caution[0]; }
+  else { f.className = 'pill ok'; f.textContent = 'GO'; }
+  f.title = nogo.length + caution.length ? nogo.concat(caution).join('; ') : 'All checks passed';
   updateStepper(stops, cands);
 }
 
