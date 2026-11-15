@@ -1,4 +1,6 @@
 """Vercel function serving a map layer fetched from NASA: /api/layer?body=mars&name=elevation."""
+import hashlib
+
 import requests
 
 from tools.live import render_layer
@@ -15,4 +17,4 @@ class handler(ApiHandler):
         except (requests.RequestException, OSError, ValueError, RuntimeError) as error:
             self.send_json(502, {"error": "NASA layer is unavailable", "detail": str(error)[:160]})
             return
-        self.send_bytes(200, layer.data, layer.content_type)
+        self.send_hashed_bytes(layer.data, layer.content_type, hashlib.sha256(layer.data).hexdigest())

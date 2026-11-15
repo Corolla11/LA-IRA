@@ -1,10 +1,12 @@
 """Vercel function returning the latest Curiosity waypoints inside the planner area."""
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
 import requests
 
+from tools.traverse import format_traverse
 from tools.responses import ApiHandler
 from tools.traverse import latest_traverse
 
@@ -23,4 +25,5 @@ class handler(ApiHandler):
         except (requests.RequestException, KeyError, TypeError, ValueError) as error:
             self.send_json(502, {"error": "NASA traverse is unavailable", "detail": str(error)[:160]})
             return
-        self.send_json(200, points)
+        data = format_traverse(points)
+        self.send_hashed_bytes(data, "application/json", hashlib.sha256(data).hexdigest())

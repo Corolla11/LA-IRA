@@ -30,7 +30,7 @@ import prepare_data
 BODIES_DIR = ROOT / "app" / "bodies"
 SOURCE_IDS = ("elevation", "optical", "hillshade", "thermal", "minerals", "traverse")
 LAYER_FILES = {"elevation": "elev.txt", "optical": "hirise.jpg", "hillshade": "hillshade.jpg",
-               "thermal": "themis.png", "minerals": "crism_hyd.png", "traverse": "traverse.json"}
+            "thermal": "themis.png", "minerals": "crism_hyd.png", "traverse": "traverse.json"}
 HILLSHADE_RULE = '{"rasterFunction":"Hillshade","rasterFunctionArguments":{"Azimuth":315,"Altitude":45,"ZFactor":1}}'
 
 
@@ -315,10 +315,20 @@ def write_status(out: str | Path, body_id: str, checked: bool) -> Status:
         if not (out / name).is_file():
             continue
         data = (out / name).read_bytes()
-        sha = hashlib.sha256(data).hexdigest()
+        content = data
+        if name == "elev.txt":
+            try:
+                n = json.loads((out / "meta.json").read_text("utf-8"))["N"]
+                decoded = base64.b64decode(data, validate=True)
+                if isinstance(n, int) and not isinstance(n, bool) and len(decoded) == n * n * 4 \
+                        and base64.b64encode(decoded) == data:
+                    content = decoded
+            except (OSError, ValueError, KeyError, TypeError):
+                pass
+        sha = hashlib.sha256(content).hexdigest()
         old: dict[str, Any] = prev.get("files", {}).get(name, {})
-        files[name] = {"sha256": sha, "size": len(data),
-                       "changedAt": old["changedAt"] if old.get("sha256") == sha else now}
+        files[name] = {"sha256": sha, "size": len(content),
+                        "changedAt": old["changedAt"] if old.get("sha256") == sha else now}
     status: Status = {
         "body": body_id,
         "lastCheckAt": now if checked else prev.get("lastCheckAt"),

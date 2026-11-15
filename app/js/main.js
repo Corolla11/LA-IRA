@@ -8,7 +8,7 @@
 import { DEFAULT_PARAMS, MAX_STOPS } from './config.js';
 import { runGate } from './sources.js';
 import { loadData } from './data.js';
-import { syncBody } from './cache.js';
+import { openCachedBody } from './cache.js';
 import { initRefresh } from './refresh.js';
 import { buildTerrain, cellOf, doseAt } from './terrain.js';
 import { planRoute, returnMap, nextFrame } from './route.js';
@@ -134,7 +134,7 @@ function addLiveNotes(data, live) {
   var late = data.fallbacks.map(function (label) { return label === 'optical' ? 'HiRISE' : label; });
   addNote(late.length
     ? 'NASA could not be reached for: ' + late.join(', ') + '. Those layers show the snapshot taken when this version was deployed.'
-    : 'Elevation, thermal, minerals, traverse and radiation were requested from NASA when this planner opened, and the HiRISE and hillshade images too. Use "Update data" to request them again.');
+    : 'The planner opened from saved or deployed data. NASA is being checked in the background; use "Update data" to check again.');
   var radNote = $('#radNote');
   if (data.meta.radiationLive && radNote) {
     var r = data.meta.radiationLive;
@@ -150,12 +150,23 @@ function localServer(manifest) { return !('live' in manifest); }
 async function start(bodyProfile, manifest) {
   body = bodyProfile;
   state.p.v0 = body.v0 || DEFAULT_PARAMS.v0;
-  var synced;
+  var synced, live = !!manifest.live;
   try {
-    // Local server (its manifests carry no "live" key): IndexedDB copy of the package, falls back to the server.
-    // Deployments read the packaged files (static) or the NASA-backed functions (live) directly.
-    synced = localServer(manifest) ? await syncBody(body.id) : { status: null, resolve: null };
-    raw = await loadData('data/' + body.id + '/', manifest.layers, manifest.live ? body.id : null, synced.resolve);
+    synced = await openCachedBody(body.id, live);
+    raw = await loadData('data/' + body.id + '/', manifest.layers, null, synced.resolve, synced.cacheFetched);
+    if (live) {
+      try {
+        var radiation = await synced.get('radiation.json');
+        if (radiation) {
+          var current = JSON.parse(await radiation.blob.text());
+          if (![current.rate, current.lat, current.lng].every(Number.isFinite) || current.rate <= 0) {
+            throw new Error('Cached radiation data is invalid.');
+          }
+          raw.meta.radiation = { rate: current.rate, lat: current.lat, lng: current.lng };
+          raw.meta.radiationLive = { sol: current.sol, firstSol: current.firstSol, lastSol: current.lastSol };
+        }
+      } catch (e) { console.warn('cached radiation unavailable', e); }
+    }
     followLiveRadiation(body, raw.meta);
     grid = buildTerrain(raw);
   } catch (err) {
@@ -169,21 +180,16 @@ async function start(bodyProfile, manifest) {
   $('#subtitle').textContent = body.subtitle || ((grid.meta.name || 'Exploration area') + ' · ' + grid.meta.body.name);
   if (body.notes) $('#sourceNotes').replaceChildren.apply($('#sourceNotes'), body.notes.map(function (t) { var li = document.createElement('li'); li.textContent = t; return li; }));
   addLiveNotes(raw, manifest.live);
-  if (manifest.live) {
-    var update = $('#btnUpdate');
-    update.hidden = false;
-    update.onclick = function () {
-      update.disabled = true;
-      try { sessionStorage.setItem('aira.reopen', JSON.stringify({ body: body.id, layers: manifest.layers })); } catch (e) { /* the startup screen is shown instead */ }
-      location.reload();
-    };
-  }
   $('#pV0').value = state.p.v0; $('#pV0').dispatchEvent(new Event('input'));
   setSolRange(raw.trav);
   CANDS = buildCandidates(grid, raw.crism, body);
   if (!CANDS.length) $('#candidateNote').textContent = 'Mark points on the map. No suggested points were supplied.';
-  initMap(grid, raw.trav, raw.crism, { onMove: onMove, onClick: onClick }, 'data/' + body.id + '/', synced.resolve);
-  if (localServer(manifest)) { $('#btnUpdate').hidden = false; initRefresh(body.id, synced.status, manifest); }
+  initMap(grid, raw.trav, raw.crism, { onMove: onMove, onClick: onClick }, 'data/' + body.id + '/', synced.resolve,
+    synced.cacheUrl);
+  if (live || localServer(manifest)) {
+    $('#btnUpdate').hidden = false;
+    initRefresh(body.id, synced.status, manifest, live, synced.ensureCached);
+  }
   applyLayerUI(manifest, !!grid.DOSE);
   defaults();
   bindParams(state.p, {

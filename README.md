@@ -138,9 +138,11 @@ Writes `dist/artifact/` (`index.html` without the document wrapper, the other fi
 
 ## Deploy to Vercel
 
-The Vercel deployment serves the planner as static files and requests every layer from NASA through
-Python functions in `api/` each time the user opens the planner or presses **Update data** (nothing is
-cached: responses are `no-store` and each request is unique):
+The planner opens with the deployed package or the browser's IndexedDB copy. On opening, it checks
+NASA in the background through the Python functions in `api/`; the status indicator shows when a
+check is running. **Update data** starts a check or joins one already in progress. The browser
+compares SHA-256 hashes, displays changes for review, and saves verified files when **Apply** is
+selected. Unchanged files receive a bodyless HTTP 304 response.
 
 | Endpoint | Returns |
 | --- | --- |
@@ -151,9 +153,9 @@ cached: responses are `no-store` and each request is unique):
 | `/api/radiation?body=mars` | mean RAD E dose of the newest 5 sols and the position of Curiosity at that time |
 
 The RAD products are ~70 MB per sol, so the function reads only the dose values with HTTP range
-requests. The data packaged by the Vercel build (`tools/prepare_data.py`) is only a fallback, used when
-NASA cannot be reached; the planner lists which layers fell back. Custom source URLs are unavailable
-in this deployment.
+requests. If a check fails, the previously saved or deployed data remains in use and the error is
+reported. Custom source URLs are unavailable in this deployment. The local development server
+also checks in the background, subject to its existing 10-minute NASA-check cooldown.
 
 Connect the repository to Vercel with the project root set to the repository root. `vercel.json`
 selects the `Other` framework preset, configures the build output, and keeps the local development
@@ -197,7 +199,7 @@ and `python -m unittest discover -s checks -p test_artifact.py`.
 | `crism_*.png` | PDS Geosciences, CRISM MTRDR `FRT0000B6F1_07` (HYD, PHY, CAR, TRU browse) | Minerals and suggested points |
 | `traverse.json` | `mars.nasa.gov/mmgis-maps/MSL/Layers/json/MSL_waypoints.json` (inside the map; latest available sols) | Curiosity traverse |
 
-The packaged 6.55 uGy/h dose rate comes from Curiosity RAD (PDS PPI, `MSL-M-RAD-3-RDR-V1.0`, E dose of sols 4669 to 4673). On Vercel it is replaced by the value `/api/radiation` computes from the newest sols each time the planner opens or updates.
+The packaged 6.55 uGy/h dose rate comes from Curiosity RAD (PDS PPI, `MSL-M-RAD-3-RDR-V1.0`, E dose of sols 4669 to 4673). On Vercel the background check compares it with the newest value from `/api/radiation`; after an update is applied the saved value is used on subsequent openings.
 
 ## Assumptions and limits
 

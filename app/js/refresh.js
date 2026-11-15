@@ -16,12 +16,15 @@ const kb = (n) => n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' 
 const isImage = (f) => /\.(png|jpe?g)$/i.test(f);
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
 
-export function initRefresh(bodyId, status, manifest) {
+export function initRefresh(bodyId, status, manifest, live, ensureCached) {
   const btn = $('#btnUpdate'), dlg = $('#refreshDlg'), body = $('#refreshBody'), msg = $('#refreshMsg');
   const bApply = $('#refreshApply'), bClose = $('#refreshClose');
-  let cur = status, result = null;
+  let cur = status, result = null, pending = null, checking = false, checkError = '';
 
-  const label = () => { $('#dataTime').textContent = cur ? 'Data: changed ' + when(cur.lastChangeAt) + ' · checked ' + ago(cur.lastCheckAt) : ''; };
+  const label = () => {
+    $('#dataTime').textContent = checking ? 'Data: checking for updates…'
+      : checkError || (cur ? 'Data: changed ' + when(cur.lastChangeAt) + ' · checked ' + ago(cur.lastCheckAt) : '');
+  };
   label(); setInterval(label, 60000);
 
   function close() { dlg.hidden = true; btn.focus(); }
@@ -45,7 +48,9 @@ export function initRefresh(bodyId, status, manifest) {
       for (const k of errs) ul.append(el('li', null, k + ': ' + r.errors[k]));
       body.append(el('p', 'note', 'Some layers could not be refreshed; their previous data was kept.'), ul);
     }
-    if (!r.diffs.length) say('No changes. This browser already has the latest data.');
+    if (!r.diffs.length) say(errs.length ? 'Update check incomplete. Some sources could not be checked.'
+      : r.throttled ? 'No changes since the last NASA check.'
+      : 'No changes. This browser already has the latest data.', !!errs.length);
     else {
       say(r.diffs.length + ' file' + (r.diffs.length > 1 ? 's' : '') + ' changed.');
       for (const d of r.diffs) {
@@ -62,20 +67,44 @@ export function initRefresh(bodyId, status, manifest) {
         body.append(row);
       }
     }
-    const same = Object.keys(r.status.files).filter((f) => !r.diffs.some((d) => d.file === f));
+    const same = Object.keys(r.status.files).filter((f) => !r.errors[f] && !r.diffs.some((d) => d.file === f));
     if (same.length) body.append(el('p', 'note', 'Unchanged: ' + same.join(', ')));
     bApply.hidden = !r.diffs.length;
   }
 
-  btn.addEventListener('click', async () => {
-    result = null; body.replaceChildren(); bApply.hidden = true; bApply.disabled = false;
-    dlg.hidden = false; say('Querying NASA sources… this can take a minute.'); bClose.focus(); btn.disabled = true;
+  async function check() {
+    if (!pending) {
+      pending = (async () => {
+        if (ensureCached) await ensureCached();
+        return checkUpdates(bodyId, live, cur);
+      })();
+      pending.then(function () { pending = null; }, function () { pending = null; });
+    }
+    return pending;
+  }
+  async function inspect(manual) {
+    if (manual) {
+      result = null; body.replaceChildren(); bApply.hidden = true; bApply.disabled = false;
+      dlg.hidden = false; say('Querying NASA sources… this can take a minute.'); bClose.focus();
+    }
+    checking = true; checkError = ''; label();
     try {
-      result = await checkUpdates(bodyId);
-      cur = result.status; label(); render(result);
-    } catch (e) { say('Update check failed: ' + e.message, true); }
-    btn.disabled = false;
-  });
+      result = await check();
+      cur = result.status; label();
+      if (Object.keys(result.errors).length) checkError = 'Data: update check incomplete';
+      if (manual || result.diffs.length) {
+        dlg.hidden = false;
+        render(result);
+        if (!manual) bClose.focus();
+      }
+    } catch (e) {
+      checkError = 'Data: update check failed';
+      if (manual) say('Update check failed: ' + e.message, true);
+      console.error('data update check failed', e);
+    } finally { checking = false; label(); }
+  }
+  btn.addEventListener('click', () => { inspect(true); });
+  inspect(false);
   bApply.addEventListener('click', async () => {
     bApply.disabled = true; say('Saving new data…');
     try {

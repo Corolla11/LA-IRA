@@ -92,7 +92,7 @@ export function runGate(onReady) {
       render(); setBusy(false);
       const bad = checks.filter((c) => !c.ok).length;
       say(deployment ? (elevOk() ? deployment.mode === 'live'
-          ? 'Layers are requested from NASA each time you open or update the planner; the data packaged at deploy time is only the fallback.'
+          ? 'Saved or packaged data opens first; NASA is checked in the background when the planner opens or when you request an update.'
           : 'Static deployment: only included data sources are available.'
           : 'Topography is not included in this deployment.')
         : !elevOk() ? 'Topography (required) is not reachable. Fix the source or its URL and re-check.'

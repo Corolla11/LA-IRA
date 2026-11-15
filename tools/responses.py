@@ -20,5 +20,20 @@ class ApiHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def send_hashed_bytes(self, body: bytes, content_type: str, sha256: str) -> None:
+        if self.query("have") == sha256:
+            self.send_response(304)
+            self.send_header("Cache-Control", NO_STORE)
+            self.send_header("X-Sha256", sha256)
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", NO_STORE)
+        self.send_header("X-Sha256", sha256)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def send_json(self, status: int, payload: object) -> None:
         self.send_bytes(status, json.dumps(payload).encode("utf-8"), "application/json")
