@@ -1,8 +1,8 @@
 /*
  * data.js - loads every generated file from app/data/ into memory.
  *
- * Input : base URL of the data folder ('data/' for the app, '../app/data/' for tests).
- * Output: loadData(base, layers, liveBody) resolves to { meta, elev, trav, themis, crism, fallbacks }.
+ * Input : base URL of the data folder ('data/' for the app, '../app/data/' for tests); optional resolve(name) from cache.js.
+ * Output: loadData(base, layers, liveBody, resolve) resolves to { meta, elev, trav, themis, crism, fallbacks }.
  *         With liveBody (a live deployment) each layer is requested from /api/layer, /api/traverse and /api/radiation
  *         every time the planner opens or is updated, and the packaged files below are the fallback (listed in
  *         `fallbacks`).
@@ -46,10 +46,12 @@ function floatsFrom(buffer, N) {
   return elev;
 }
 
-export async function loadData(base, selectedLayers, liveBody) {
+// resolve(name) -> url (cache.js object URLs); without it packaged files come from base + name
+export async function loadData(base, selectedLayers, liveBody, resolve) {
   base = base || 'data/';
+  var file = function (name) { return resolve ? resolve(name) : base + name; };
   async function get(name) {
-    var response = await fetch(base + name);
+    var response = await fetch(file(name));
     if (!response.ok) throw new Error('Cannot load ' + name + ': HTTP ' + response.status);
     return response;
   }
@@ -101,20 +103,20 @@ export async function loadData(base, selectedLayers, liveBody) {
     return kind === 'buffer' ? response.arrayBuffer() : response.json();
   }
   // Resolves { url, image } from the NASA-backed function, or from the packaged file
-  function picture(label, liveName, file) {
+  function picture(label, liveName, packaged) {
     return fresh(label, async function () {
       var url = layerUrl(liveName);
       return { url: url, image: await loadImage(url) };
     }, async function () {
-      var url = base + file;
+      var url = file(packaged);
       return { url: url, image: await loadImage(url) };
     });
   }
   // Map overlays (HiRISE, hillshade) are not awaited: Leaflet loads them itself and map.js switches to the
   // packaged file if the NASA one fails, so the slow HiRISE mosaic never delays opening the planner.
-  function overlay(liveName, file) {
-    if (!liveBody) return loadImage(base + file).then(function () { return { url: base + file }; });
-    return Promise.resolve({ url: layerUrl(liveName), snapshot: base + file });
+  function overlay(liveName, packaged) {
+    if (!liveBody) return loadImage(file(packaged)).then(function () { return { url: file(packaged) }; });
+    return Promise.resolve({ url: layerUrl(liveName), snapshot: file(packaged) });
   }
   var jobs = {
     elev: fresh('elevation', async function () {

@@ -7,10 +7,12 @@ Profiles live in app/bodies/<id>.json (read by Python and JS). Adapter names:
     wmts                   equirectangular WMTS tiles stitched and cropped to the area -> hirise.jpg
 """
 import base64
+import hashlib
 import io
 import json
 import math
 import sys
+import time
 import urllib.request
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -257,5 +259,49 @@ def write_meta(out: Path, body: BodyProfile, layers: Mapping[str, bool]) -> dict
         meta.pop("radiation", None)
     if body["id"] == "mars":
         meta["example"] = "gale"
-    (out / "meta.json").write_bytes((json.dumps(meta, indent=2) + "\n").encode())
+    # sort_keys: the same content always gives the same bytes, so a refresh does not flag a reordered meta.json
+    (out / "meta.json").write_bytes((json.dumps(meta, indent=2, sort_keys=True) + "\n").encode())
     return meta
+
+
+COOLDOWN_SECONDS = 600
+
+
+def utc_iso(t=None):
+    """ISO 8601 UTC with Z, seconds precision."""
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
+
+
+def package_files(out):
+    """elev.txt, meta.json and every file listed in meta.json layers (crism expands to its files)."""
+    try:
+        layers = json.loads((Path(out) / "meta.json").read_text("utf-8")).get("layers", {})
+    except OSError:  # no meta.json yet (stubbed adapters in tests)
+        layers = {}
+    names = ["elev.txt", "meta.json"]
+    for v in layers.values():
+        names += list(v.values()) if isinstance(v, dict) else [v]
+    return names
+
+
+def write_status(out, body_id, checked):
+    """Write app/data/<body>/status.json: sha256/size/changedAt per package file (changedAt kept while the
+    hash is unchanged), lastChangeAt = max changedAt, lastCheckAt = now if `checked` else previous."""
+    out = Path(out)
+    try:
+        prev = json.loads((out / "status.json").read_text("utf-8"))
+    except (OSError, ValueError):
+        prev = {}
+    now, files = utc_iso(), {}
+    for name in package_files(out):
+        if not (out / name).is_file():
+            continue
+        data = (out / name).read_bytes()
+        sha, old = hashlib.sha256(data).hexdigest(), prev.get("files", {}).get(name, {})
+        files[name] = {"sha256": sha, "size": len(data),
+                       "changedAt": old["changedAt"] if old.get("sha256") == sha else now}
+    status = {"body": body_id, "lastCheckAt": now if checked else prev.get("lastCheckAt"),
+              "lastChangeAt": max((f["changedAt"] for f in files.values()), default=None),
+              "cooldownSeconds": COOLDOWN_SECONDS, "files": files}
+    (out / "status.json").write_text(json.dumps(status, indent=2) + "\n", "utf-8")
+    return status

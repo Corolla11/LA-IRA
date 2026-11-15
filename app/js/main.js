@@ -8,6 +8,8 @@
 import { DEFAULT_PARAMS, MAX_STOPS } from './config.js';
 import { runGate } from './sources.js';
 import { loadData } from './data.js';
+import { syncBody } from './cache.js';
+import { initRefresh } from './refresh.js';
 import { buildTerrain, cellOf, doseAt } from './terrain.js';
 import { planRoute, returnMap, nextFrame } from './route.js';
 import { buildCandidates } from './candidates.js';
@@ -141,12 +143,19 @@ function addLiveNotes(data, live) {
   }
 }
 
+// Manifests from the local server (/api/prepare) have no "live" key; deployments always set it (sources.js).
+function localServer(manifest) { return !('live' in manifest); }
+
 // body = profile from app/bodies/<id>.json; manifest contains the selected source layers.
 async function start(bodyProfile, manifest) {
   body = bodyProfile;
   state.p.v0 = body.v0 || DEFAULT_PARAMS.v0;
+  var synced;
   try {
-    raw = await loadData('data/' + body.id + '/', manifest.layers, manifest.live ? body.id : null);
+    // Local server (its manifests carry no "live" key): IndexedDB copy of the package, falls back to the server.
+    // Deployments read the packaged files (static) or the NASA-backed functions (live) directly.
+    synced = localServer(manifest) ? await syncBody(body.id) : { status: null, resolve: null };
+    raw = await loadData('data/' + body.id + '/', manifest.layers, manifest.live ? body.id : null, synced.resolve);
     followLiveRadiation(body, raw.meta);
     grid = buildTerrain(raw);
   } catch (err) {
@@ -173,7 +182,8 @@ async function start(bodyProfile, manifest) {
   setSolRange(raw.trav);
   CANDS = buildCandidates(grid, raw.crism, body);
   if (!CANDS.length) $('#candidateNote').textContent = 'Mark points on the map. No suggested points were supplied.';
-  initMap(grid, raw.trav, raw.crism, { onMove: onMove, onClick: onClick }, 'data/' + body.id + '/');
+  initMap(grid, raw.trav, raw.crism, { onMove: onMove, onClick: onClick }, 'data/' + body.id + '/', synced.resolve);
+  if (localServer(manifest)) { $('#btnUpdate').hidden = false; initRefresh(body.id, synced.status, manifest); }
   applyLayerUI(manifest, !!grid.DOSE);
   defaults();
   bindParams(state.p, {
@@ -196,4 +206,17 @@ async function start(bodyProfile, manifest) {
   });
   plan();
 }
-runGate(start);
+// After "Apply" the page reloads: resume the same body and layers without the startup screen (one use)
+(async function boot() {
+  var saved = null;
+  try { saved = JSON.parse(sessionStorage.getItem('aira-resume')); sessionStorage.removeItem('aira-resume'); } catch (e) { /* none */ }
+  if (saved && saved.bodyId) {
+    $('#gate').hidden = true;
+    try {
+      var r = await fetch('bodies/' + encodeURIComponent(saved.bodyId) + '.json');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return start(await r.json(), saved.manifest);
+    } catch (e) { console.error(e); }
+  }
+  runGate(start);
+})();
