@@ -8,6 +8,8 @@
 import { DEFAULT_PARAMS, MAX_STOPS } from './config.js';
 import { runGate } from './sources.js';
 import { loadData } from './data.js';
+import { syncBody } from './cache.js';
+import { initRefresh } from './refresh.js';
 import { buildTerrain, cellOf, doseAt } from './terrain.js';
 import { planRoute, returnMap, nextFrame } from './route.js';
 import { buildCandidates } from './candidates.js';
@@ -120,8 +122,11 @@ window.evaDebug = function () {
 async function start(bodyProfile, manifest) {
   body = bodyProfile;
   state.p.v0 = body.v0 || DEFAULT_PARAMS.v0;
+  var synced;
   try {
-    raw = await loadData('data/' + body.id + '/');
+    setStatus('Loading data…', 'info');
+    synced = await syncBody(body.id);   // IndexedDB copy of the package (falls back to the server)
+    raw = await loadData('data/' + body.id + '/', synced.resolve);
     grid = buildTerrain(raw);
   } catch (err) {
     setStatus('Error loading data', 'bad');
@@ -137,7 +142,8 @@ async function start(bodyProfile, manifest) {
   setSolRange(raw.trav);
   CANDS = buildCandidates(grid, raw.crism, body);
   if (!CANDS.length) $('#candidateNote').textContent = 'Mark points on the map. No suggested points were supplied.';
-  initMap(grid, raw.trav, raw.crism, { onMove: onMove, onClick: onClick }, 'data/' + body.id + '/');
+  initMap(grid, raw.trav, raw.crism, { onMove: onMove, onClick: onClick }, 'data/' + body.id + '/', synced.resolve);
+  initRefresh(body.id, synced.status, manifest);
   applyLayerUI(manifest, !!grid.DOSE);
   defaults();
   bindParams(state.p, {
@@ -160,4 +166,17 @@ async function start(bodyProfile, manifest) {
   });
   plan();
 }
-runGate(start);
+// After "Apply" the page reloads: resume the same body and layers without the startup screen (one use)
+(async function boot() {
+  var saved = null;
+  try { saved = JSON.parse(sessionStorage.getItem('aira-resume')); sessionStorage.removeItem('aira-resume'); } catch (e) { /* none */ }
+  if (saved && saved.bodyId) {
+    $('#gate').hidden = true;
+    try {
+      var r = await fetch('bodies/' + encodeURIComponent(saved.bodyId) + '.json');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return start(await r.json(), saved.manifest);
+    } catch (e) { console.error(e); }
+  }
+  runGate(start);
+})();

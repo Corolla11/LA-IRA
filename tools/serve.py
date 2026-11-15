@@ -7,11 +7,17 @@ Serving the repo root (not app/) also lets tests/route.test.html reach ../app/js
 API (JSON):
     GET  /api/bodies                 -> [{"id","name"}]
     GET  /api/sources?body=<id>      -> {"body","checks":[{"id","label","required","ok","detail","prepared"}]}
+    POST /api/refresh                -> {"body"} -> {"throttled","status","changed","errors","nextCheckAt"}
     POST /api/prepare                -> {"body","layers":[ids],"overrides":{id:url}} -> {"ok","manifest","errors"}
 """
 import functools
+import calendar
 import json
+import shutil
 import sys
+import tempfile
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -74,8 +80,52 @@ def prepare(body_id, layers, overrides):
     manifest = adapters.write_manifest(out, body_id, result, {k: v for k, v in used.items() if result.get(k)})
     if not manifest["layers"]["elevation"]:
         return 400, {"ok": False, "manifest": manifest, "errors": errors}
+    adapters.write_status(out, body_id, checked=False)
     notes = {k: SKIP_DETAIL for k in manifest["overrides"]}  # similarity test is a stub that always passes
     return 200, {"ok": not errors, "manifest": manifest, "errors": errors, "notes": notes}
+
+
+LOCKS = {}
+
+
+def refresh(body_id):
+    """Re-query NASA for the prepared layers (once per cooldown, one at a time per body) and replace changed
+    files. Returns (status, payload)."""
+    if body_id not in body_ids():
+        return 404, {"error": "unknown body"}
+    out = DATA_DIR / body_id
+    if not (out / "manifest.json").is_file():
+        return 409, {"error": "body not prepared"}
+    with LOCKS.setdefault(body_id, threading.Lock()):  # a waiter finds lastCheckAt fresh -> throttled
+        if not (out / "status.json").is_file():
+            adapters.write_status(out, body_id, checked=False)
+        status = json.loads((out / "status.json").read_text("utf-8"))
+        last = status["lastCheckAt"] and calendar.timegm(time.strptime(status["lastCheckAt"], "%Y-%m-%dT%H:%M:%SZ"))
+        if last and time.time() - last < status["cooldownSeconds"]:
+            return 200, {"throttled": True, "status": status, "changed": [], "errors": {},
+                         "nextCheckAt": adapters.utc_iso(last + status["cooldownSeconds"])}
+        manifest = json.loads((out / "manifest.json").read_text("utf-8"))
+        body = adapters.load_body(body_id)
+        by_id, errors, changed = {s["id"]: s for s in body["sources"]}, {}, []
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            for sid in adapters.SOURCE_IDS:
+                if not manifest["layers"].get(sid):
+                    continue
+                try:
+                    adapters.prepare_source(body, by_id[sid], tmp, manifest["overrides"].get(sid))
+                except Exception as e:
+                    errors[sid] = str(e)[:300]
+            adapters.write_manifest(tmp, body_id, manifest["layers"], manifest["overrides"])  # normalise meta.json
+            for name in adapters.package_files(out):
+                new = tmp / name
+                if new.is_file() and (not (out / name).is_file() or new.read_bytes() != (out / name).read_bytes()):
+                    shutil.copyfile(new, out / name)
+                    changed.append(name)
+        status = adapters.write_status(out, body_id, checked=True)
+        last = calendar.timegm(time.strptime(status["lastCheckAt"], "%Y-%m-%dT%H:%M:%SZ"))
+        return 200, {"throttled": False, "status": status, "changed": changed, "errors": errors,
+                     "nextCheckAt": adapters.utc_iso(last + status["cooldownSeconds"])}
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -113,7 +163,8 @@ class Handler(SimpleHTTPRequestHandler):
         return super().send_head()
 
     def do_POST(self):
-        if urlparse(self.path).path != "/api/prepare":
+        path = urlparse(self.path).path
+        if path not in ("/api/prepare", "/api/refresh"):
             return self.send_json(404, {"error": "not found"})
         try:
             req = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
@@ -122,6 +173,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json(400, {"error": "invalid request"})
         if bid not in body_ids():
             return self.send_json(404, {"error": "unknown body"})
+        if path == "/api/refresh":
+            return self.send_json(*refresh(bid))
         status, payload = prepare(bid, req.get("layers"), req.get("overrides"))
         self.send_json(status, payload)
 

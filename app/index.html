@@ -33,13 +33,29 @@
   </div>
 </div>
 
+<div id="refreshDlg" class="gate dlg" role="dialog" aria-modal="true" aria-labelledby="refreshTitle" hidden>
+  <div class="gate-box">
+    <h1 id="refreshTitle">Update data</h1>
+    <p id="refreshMsg" class="gate-msg note" role="status" aria-live="polite"></p>
+    <div id="refreshBody" class="dlg-body"></div>
+    <div class="btns">
+      <button type="button" id="refreshApply" class="primary" hidden>Apply</button>
+      <button type="button" id="refreshClose">Close</button>
+    </div>
+  </div>
+</div>
+
 <div class="app">
   <header class="topbar">
     <div class="title-block">
       <h1>A-IRA EVA Planner</h1>
       <span class="sub" id="subtitle">Mount Sharp, Gale crater · 2.46 × 2.46 km area · NASA data (HiRISE, DTM, CRISM, THEMIS, RAD)</span>
     </div>
-    <span id="status" class="pill info">Loading data…</span>
+    <div class="top-right">
+      <span id="dataTime" class="note"></span>
+      <button type="button" id="btnUpdate">Update data</button>
+      <span id="status" class="pill info">Loading data…</span>
+    </div>
   </header>
 
   <main class="main">

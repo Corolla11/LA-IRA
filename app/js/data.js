@@ -1,7 +1,7 @@
 /*
  * data.js - loads every generated file from app/data/ into memory.
  *
- * Input : base URL of the data folder ('data/' for the app, '../app/data/' for tests).
+ * Input : base URL of the data folder ('data/' for the app, '../app/data/' for tests); optional resolve(name) from cache.js.
  * Output: loadData(base) resolves to { meta, elev, trav, themis, crism }.
  * Used by: main.js (start) and tests/route.test.html. terrain.js turns the result into the grid.
  *
@@ -33,10 +33,12 @@ export function imageData(im) {
   var cx = cv.getContext('2d'); cx.drawImage(im, 0, 0); return cx.getImageData(0, 0, cv.width, cv.height);
 }
 
-export async function loadData(base) {
+// resolve(name) -> url (cache.js object URLs); without it files come from base + name
+export async function loadData(base, resolve) {
   base = base || 'data/';
+  var url = function (name) { return resolve ? resolve(name) : base + name; };
   async function get(name) {
-    var response = await fetch(base + name);
+    var response = await fetch(url(name));
     if (!response.ok) throw new Error('Cannot load ' + name + ': HTTP ' + response.status);
     return response;
   }
@@ -58,10 +60,10 @@ export async function loadData(base) {
     if (!Number.isFinite(elev[bi])) throw new Error('Elevation contains missing or invalid values.');
   }
   var layers = meta.layers || {};
-  if (layers.image) await loadImage(base + layers.image);
-  if (layers.hillshade) await loadImage(base + layers.hillshade);
+  if (layers.image) await loadImage(url(layers.image));
+  if (layers.hillshade) await loadImage(url(layers.hillshade));
   var trav = layers.traverse ? await (await get(layers.traverse)).json() : [];
-  var themis = layers.thermal ? imageData(await loadImage(base + layers.thermal)) : null;
+  var themis = layers.thermal ? imageData(await loadImage(url(layers.thermal))) : null;
   if (themis && (themis.width !== meta.themisSize || themis.height !== meta.themisSize || meta.themisSize < 2)) {
     throw new Error('Thermal image dimensions do not match themisSize.');
   }
@@ -72,6 +74,6 @@ export async function loadData(base) {
   if (keys.length && !['hyd', 'phy', 'car', 'tru'].every(function (key) { return layers.crism[key]; })) {
     throw new Error('The CRISM layer requires hyd, phy, car and tru images.');
   }
-  for (var ki = 0; ki < keys.length; ki++) crism[keys[ki]] = imageData(await loadImage(base + layers.crism[keys[ki]]));
+  for (var ki = 0; ki < keys.length; ki++) crism[keys[ki]] = imageData(await loadImage(url(layers.crism[keys[ki]])));
   return { meta: meta, elev: elev, trav: trav, themis: themis, crism: crism };
 }
