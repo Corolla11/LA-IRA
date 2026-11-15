@@ -1,19 +1,21 @@
 /*
  * main.js - entry point (loaded as a module by index.html). Owns the app state and wires everything together.
  *
- * Flow: loadData -> buildTerrain -> buildCandidates -> initMap -> bindParams -> plan().
+ * Flow: runGate (sources.js: body + manifest) -> start(body, manifest): loadData -> buildTerrain -> buildCandidates
+ * -> initMap -> bindParams -> plan(). body = app/bodies/<id>.json, manifest = app/data/<id>/manifest.json.
  * plan() runs A* (route.js) only when geometry or limits change; EVA duration, reserve and stop time
  * only call refresh() (schedule), without rerunning A*.
  */
-import { DEFAULT_PARAMS, HAB_PX, MAX_STOPS } from './config.js';
+import { DEFAULT_PARAMS, MAX_STOPS } from './config.js';
+import { runGate } from './sources.js';
 import { loadData } from './data.js';
-import { buildTerrain, cellOf, pxToLL, doseAt } from './terrain.js';
+import { buildTerrain, cellOf, doseAt } from './terrain.js';
 import { planRoute, returnMap, nextFrame } from './route.js';
 import { buildCandidates } from './candidates.js';
 import { initMap, setCursor, toggleLayer, renderSlope, renderReturn, renderCrism, renderRoute } from './map.js';
-import { $, nf, fmtMin, setStatus, setRadRange, setSolRange, setModeUI, refreshTimes, renderSegments, drawProfile, bindParams } from './ui.js';
+import { $, nf, fmtMin, setStatus, setRadRange, setRadRef, setSolRange, applyLayerUI, setModeUI, refreshTimes, renderSegments, drawProfile, bindParams } from './ui.js';
 
-var grid, raw, CANDS = [], cache = { sig: '', map: new Map() };
+var grid, raw, body, CANDS = [], cache = { sig: '', map: new Map() };
 var runToken = 0, lastPlan = null, retMap = null, retKey = '';
 var state = { habitat: null, stops: [], mode: null, p: Object.assign({}, DEFAULT_PARAMS) };
 
@@ -68,7 +70,7 @@ function setMode(m) {
   state.mode = m; setModeUI(m); setCursor(m ? 'crosshair' : '');
 }
 function defaults() {
-  state.habitat = Object.assign({ name: 'Habitat' }, pxToLL(grid, HAB_PX[0], HAB_PX[1]));
+  state.habitat = { name: 'Habitat', lat: body.habitat.lat, lng: body.habitat.lng };
   state.stops = CANDS.slice(0, 4).map(function (c) { return Object.assign({}, c, { work: state.p.work }); });
 }
 
@@ -76,7 +78,7 @@ function onMove(ll) {
   var c = cellOf(grid, ll.lat, ll.lng);
   if (c < 0) return;
   var txt = ll.lat.toFixed(5) + ', ' + ll.lng.toFixed(5) + ' · elev ' + nf(grid.ELEV[c]) + ' m · slope ' + nf(grid.SLOPE[c], 1) + '°' +
-    (grid.SAND[c] ? ' · sand' : ' · rock') + ' · dose ~' + nf(doseAt(grid, c), 2) + ' µGy/h';
+    (grid.TV ? (grid.SAND[c] ? ' · sand' : ' · rock') : '') + ' · dose ~' + nf(doseAt(grid, c), 2) + ' µGy/h';
   if (retMap && isFinite(retMap.T[c])) txt += ' · return ' + fmtMin(retMap.T[c]);
   $('#readout').textContent = txt;
 }
@@ -104,19 +106,26 @@ window.evaDebug = function () {
   };
 };
 
-async function start() {
+async function start(bodyProfile, manifest) {
+  body = bodyProfile;
+  state.p.v0 = body.v0 || DEFAULT_PARAMS.v0;
   try {
-    raw = await loadData('data/');
-    grid = buildTerrain(raw);
+    raw = await loadData('data/' + body.id + '/', manifest);
+    grid = buildTerrain(raw, body);
   } catch (err) {
     setStatus('Error loading data', 'bad');
     $('#readout').textContent = 'Could not load the data/ folder. Open the page through a server, not directly from the file.';
     return;
   }
   setRadRange(grid.doseMin, grid.doseMax);
+  setRadRef(grid.doseRate);
   setSolRange(raw.trav);
-  CANDS = buildCandidates(grid, raw.crism);
-  initMap(grid, raw.trav, raw.crism, { onMove: onMove, onClick: onClick });
+  applyLayerUI(manifest, !!body.doseRate);
+  if (body.subtitle) $('#subtitle').textContent = body.subtitle;
+  if (body.notes) $('#sourceNotes').replaceChildren.apply($('#sourceNotes'), body.notes.map(function (t) { var li = document.createElement('li'); li.textContent = t; return li; }));
+  $('#pV0').value = state.p.v0;
+  CANDS = buildCandidates(grid, raw.crism, body);
+  initMap(grid, raw.trav, raw.crism, { onMove: onMove, onClick: onClick }, body, manifest);
   defaults();
   bindParams(state.p, {
     replan: plan, refresh: refresh,
@@ -138,4 +147,5 @@ async function start() {
   });
   plan();
 }
-start();
+// The gate (sources.js) lets the user pick a body and its layers, then calls start(body, manifest).
+runGate(start);

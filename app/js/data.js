@@ -1,8 +1,11 @@
 /*
  * data.js - loads every generated file from app/data/ into memory.
  *
- * Input : base URL of the data folder ('data/' for the app, '../app/data/' for tests).
- * Output: loadData(base) resolves to { meta, elev, trav, themis, crism }.
+ * Input : base URL of the body's data folder ('data/<body>/' for the app, '../app/data/mars/' for tests) and
+ *         optionally the manifest.json of that folder ({ layers: { thermal, minerals, traverse, ... }: bool }).
+ * Output: loadData(base, manifest) resolves to { meta, elev, trav, themis, crism }; trav, themis and crism are null
+ *         when their layer is absent from the manifest (manifest omitted = every layer present).
+ *         Only the elevation is required.
  * Used by: main.js (start) and tests/route.test.html. terrain.js turns the result into the grid.
  *
  * Files fetched from app/data (all produced by tools/prepare_data.py, never edited by hand):
@@ -33,16 +36,20 @@ export function imageData(im) {
   var cx = cv.getContext('2d'); cx.drawImage(im, 0, 0); return cx.getImageData(0, 0, cv.width, cv.height);
 }
 
-export async function loadData(base) {
-  base = base || 'data/';
+export async function loadData(base, manifest) {
+  base = base || 'data/mars/';
   // Sequential awaits keep the code simple; the files are local and small except elev.txt (~5.3 MB of base64)
   var meta = await (await fetch(base + 'meta.json')).json();
   var b64 = await (await fetch(base + 'elev.txt')).text(), bin = atob(b64.trim()), raw = new Uint8Array(bin.length);
   for (var bi = 0; bi < bin.length; bi++) raw[bi] = bin.charCodeAt(bi);
   var elev = new Float32Array(raw.buffer);   // N*N floats, meters; length must be N*N
-  var trav = await (await fetch(base + 'traverse.json')).json();
-  var themis = imageData(await loadImage(base + 'themis.png'));
-  var crism = {}, keys = ['hyd', 'phy', 'car', 'tru'];
-  for (var ki = 0; ki < keys.length; ki++) crism[keys[ki]] = imageData(await loadImage(base + 'crism_' + keys[ki] + '.png'));
+  function has(id) { return !manifest || !manifest.layers || manifest.layers[id] !== false; }
+  var trav = has('traverse') ? await (await fetch(base + 'traverse.json')).json() : null;
+  var themis = has('thermal') ? imageData(await loadImage(base + 'themis.png')) : null;
+  var crism = null, keys = ['hyd', 'phy', 'car', 'tru'];
+  if (has('minerals')) {
+    crism = {};
+    for (var ki = 0; ki < keys.length; ki++) crism[keys[ki]] = imageData(await loadImage(base + 'crism_' + keys[ki] + '.png'));
+  }
   return { meta: meta, elev: elev, trav: trav, themis: themis, crism: crism };
 }

@@ -255,11 +255,30 @@ STEPS = {"elev": step_elev, "meta": step_meta, "hirise": step_hirise, "hillshade
 
 
 def main():
-    """CLI: --out DIR (created if missing), --only a,b (subset of STEPS, default all, run in order)."""
+    """CLI: --out DIR (Mars; created if missing), --only a,b (subset of STEPS, default all, run in order).
+    --body ID prepares every source of app/bodies/<ID>.json into app/data/<ID>/ and writes manifest.json."""
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", required=True)
+    ap.add_argument("--out")
+    ap.add_argument("--body")
     ap.add_argument("--only", default=",".join(STEPS))
     a = ap.parse_args()
+    if a.body:
+        import adapters
+        body = adapters.load_body(a.body)
+        out = Path(a.out) if a.out else Path(__file__).resolve().parent.parent / "app" / "data" / a.body
+        layers = {}
+        for src in body["sources"]:
+            try:
+                adapters.prepare_source(body, src, out)
+                layers[src["id"]] = True
+                print(src["id"], "ok")
+            except Exception as e:
+                layers[src["id"]] = False
+                print(src["id"], "FAILED:", e)
+        adapters.write_manifest(out, body["id"], layers, {})
+        return
+    if not a.out:
+        ap.error("--out or --body is required")
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     for name in a.only.split(","):

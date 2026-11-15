@@ -31,9 +31,9 @@ DATA_FILES = ("elev.txt", "meta.json", "traverse.json", "hirise.jpg", "hillshade
 def build(app: Path = ROOT / "app", out: Path = ROOT / "dist" / "artifact") -> dict:
     """Rebuild `out` from `app` (deleting `out` first); exit with a message if data files are missing.
     Returns the files.json mapping {published path: repo-relative source path}."""
-    missing = [f for f in DATA_FILES if not (app / "data" / f).is_file()]
+    missing = [f for f in DATA_FILES if not (app / "data" / "mars" / f).is_file()]
     if missing:
-        sys.exit(f"app/data is missing {', '.join(missing)}: run `uv run tools/prepare_data.py --out app/data` first")
+        sys.exit(f"app/data/mars is missing {', '.join(missing)}: run `uv run tools/prepare_data.py --body mars` first")
     if out.exists():
         shutil.rmtree(out)
     out.mkdir(parents=True)

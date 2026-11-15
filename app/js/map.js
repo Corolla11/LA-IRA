@@ -1,12 +1,13 @@
 /*
  * map.js - Leaflet map and all overlays.
  *
- * Input : grid, traverse list, CRISM ImageData and route plans from main.js; layer checkboxes in index.html.
+ * Input : grid, traverse list (or null), CRISM ImageData (or null), body profile, manifest and route plans from
+ *         main.js; layer checkboxes in index.html. Layers absent from the manifest / data are simply not created.
  * Output: Leaflet layers (hirise/hillshade as image overlays from data/*.jpg; slope, return time, radiation,
  *         THEMIS and CRISM drawn into canvases and shown as image overlays), route polylines and draggable pins.
  * Used by: main.js (initMap, toggleLayer, render*), ui.js (tok). Uses the global L (Leaflet, loaded in index.html).
  */
-import { DOSE_RATE, RM, CRISM_LEGEND } from './config.js';
+import { RM, CRISM_LEGEND } from './config.js';
 import { llOf } from './terrain.js';
 
 var $ = function (s) { return document.querySelector(s); };
@@ -39,28 +40,30 @@ function colorizeThemis(tv, S) {
   cx.putImageData(img, 0, 0); return cv;
 }
 
-// handlers = { onMove(latlng), onClick(latlng) }
-export function initMap(grid, trav, crism, handlers) {
-  var META = grid.meta;
+// handlers = { onMove(latlng), onClick(latlng) }; body = profile json; manifest = { layers: {...} } (omitted = all)
+export function initMap(grid, trav, crism, handlers, body, manifest) {
+  var META = grid.meta, base = 'data/' + body.id + '/';
+  function has(id) { return !manifest || !manifest.layers || manifest.layers[id] !== false; }
   bounds = L.latLngBounds([META.latS, META.lonW], [META.latN, META.lonE]);
-  crismBounds = L.latLngBounds([META.crism.latS, META.crism.lonW], [META.crism.latN, META.crism.lonE]);
+  if (crism) crismBounds = L.latLngBounds([META.crism.latS, META.crism.lonW], [META.crism.latN, META.crism.lonE]);
   map = L.map('map', { crs: L.CRS.EPSG4326, zoomSnap: 0.25, minZoom: 12, maxZoom: 17, maxBounds: bounds.pad(0.4), maxBoundsViscosity: 0.8 });
   map.attributionControl.setPrefix(false);
-  map.attributionControl.addAttribution('NASA/JPL-Caltech/UArizona/JHUAPL/ASU · NASA Mars Trek, PDS · Leaflet');
+  map.attributionControl.addAttribution(body.attribution || 'Leaflet');
   map.fitBounds(bounds);
   requestAnimationFrame(function () { map.invalidateSize(); map.fitBounds(bounds); });
   map.createPane('ovl').style.zIndex = 410;
   map.createPane('routes').style.zIndex = 450;
 
-  layers.hirise = L.imageOverlay('data/hirise.jpg', bounds).addTo(map);
-  layers.hill = L.imageOverlay('data/hillshade.jpg', bounds, { opacity: 0.5, pane: 'ovl' });
+  if (has('optical')) layers.hirise = L.imageOverlay(base + 'hirise.jpg', bounds).addTo(map);
+  if (has('hillshade')) layers.hill = L.imageOverlay(base + 'hillshade.jpg', bounds, { opacity: 0.5, pane: 'ovl' });
   layers.slope = null; layers.ret = null; layers.crism = null; layers.rad = null; layers.themis = null;
   layers.route = L.layerGroup().addTo(map);
 
-  canvasOverlay(colorizeThemis(grid.TV, META.themisSize), 'themis', '#lThemis', 0.65, bounds);
+  if (grid.TV) canvasOverlay(colorizeThemis(grid.TV, META.themisSize), 'themis', '#lThemis', 0.65, bounds);
   renderRadiation(grid);
   renderCrism(crism);
 
+  if (trav) {
   var tl = trav.map(function (p) { return [p[1], p[2]]; });
   layers.trav = L.layerGroup([
     L.polyline(tl, { pane: 'routes', color: tok('--traverse'), weight: 2.5, dashArray: '6 5', opacity: 0.95 })
@@ -68,6 +71,7 @@ export function initMap(grid, trav, crism, handlers) {
     return L.circleMarker([p[1], p[2]], { pane: 'routes', radius: 3, color: tok('--traverse'), weight: 1, fillOpacity: 0.9 })
       .bindTooltip('Curiosity · sol ' + p[0], { direction: 'top' });
   }))).addTo(map);
+  }
 
   map.on('mousemove', function (e) { handlers.onMove(e.latlng); });
   map.on('click', function (e) { handlers.onClick(e.latlng); });
@@ -113,7 +117,7 @@ function renderRadiation(grid) {
   var cv = document.createElement('canvas'); cv.width = RM; cv.height = RM;
   var cx = cv.getContext('2d'), img = cx.createImageData(RM, RM), d = img.data;
   var lo = tok('--rad-low').split(',').map(Number), hi = tok('--rad-high').split(',').map(Number);
-  var span = Math.max(doseMax - DOSE_RATE, DOSE_RATE - doseMin) || 1;
+  var DOSE_RATE = grid.doseRate, span = Math.max(doseMax - DOSE_RATE, DOSE_RATE - doseMin) || 1;
   for (var q = 0; q < RM * RM; q++) {
     var t = (DOSE[q] - DOSE_RATE) / span, col = t < 0 ? lo : hi, a = Math.min(1, Math.abs(t)), o = q * 4;
     d[o] = 244 + (col[0] - 244) * a; d[o + 1] = 244 + (col[1] - 244) * a; d[o + 2] = 244 + (col[2] - 244) * a; d[o + 3] = 70 + 140 * a;
@@ -123,6 +127,7 @@ function renderRadiation(grid) {
 }
 
 export function renderCrism(crism) {
+  if (!crism) return;
   var k = $('#crismSel').value, src = crism[k], d = new Uint8ClampedArray(src.data);
   if (k !== 'tru') for (var q = 0; q < d.length; q += 4) { var m = Math.max(d[q], d[q + 1], d[q + 2]); d[q + 3] = Math.min(255, m * 2.2); }
   var cv = document.createElement('canvas'); cv.width = src.width; cv.height = src.height;
