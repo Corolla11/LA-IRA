@@ -136,6 +136,17 @@ uv run tools/build_artifact.py
 
 Writes `dist/artifact/` (`index.html` without the document wrapper, the other files, and `files.json`).
 
+## Deploy to Vercel
+
+The Vercel deployment is a static build. Its build command prepares the Mars data package from NASA
+services, then copies the app and the prepared package into `dist/vercel/`. The startup screen only
+offers bodies and layers included in that build; runtime downloads, custom source URLs, and changes to
+the package are not available on the static deployment. To add another body, prepare its package and
+update the Vercel build command to prepare it before deploying.
+
+Connect the repository to Vercel with the project root set to the repository root. `vercel.json`
+configures the build command and output directory.
+
 ## How the data flows
 
 ```

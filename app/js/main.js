@@ -115,13 +115,12 @@ window.evaDebug = function () {
   };
 };
 
-// body = profile from app/bodies/<id>.json, manifest = layers the user picked (written by /api/prepare;
-// the same selection is in data/<id>/meta.json "layers", which is what loadData reads)
+// body = profile from app/bodies/<id>.json; manifest contains the selected source layers.
 async function start(bodyProfile, manifest) {
   body = bodyProfile;
   state.p.v0 = body.v0 || DEFAULT_PARAMS.v0;
   try {
-    raw = await loadData('data/' + body.id + '/');
+    raw = await loadData('data/' + body.id + '/', manifest.layers);
     grid = buildTerrain(raw);
   } catch (err) {
     setStatus('Error loading data', 'bad');

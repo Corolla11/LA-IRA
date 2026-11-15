@@ -84,6 +84,30 @@ test('loader accepts a topography-only package and rejects invalid elevation', a
   } finally { globalThis.fetch = oldFetch; }
 });
 
+test('loader only uses layers selected for the deployment', async () => {
+  const meta = {
+    schema: 1, body: { name: 'Mars', radius: 3396190 }, N: 2,
+    lonW: 0, lonE: 1, latS: 0, latN: 1,
+    layers: { image: 'map.jpg', hillshade: 'hillshade.jpg', thermal: 'thermal.png',
+      traverse: 'traverse.json', crism: { hyd: 'hyd.png', phy: 'phy.png', car: 'car.png', tru: 'tru.png' } }
+  };
+  const bytes = new Uint8Array(16), oldFetch = globalThis.fetch, requested = [];
+  globalThis.fetch = async url => {
+    requested.push(url);
+    return { ok: true, json: async () => meta, text: async () => Buffer.from(bytes).toString('base64') };
+  };
+  try {
+    const data = await loadData('data/', {
+      elevation: true, optical: false, hillshade: false, thermal: false, traverse: false, minerals: false
+    });
+    assert.deepEqual(data.meta.layers, {});
+    assert.equal(data.themis, null);
+    assert.deepEqual(data.trav, []);
+    assert.deepEqual(data.crism, {});
+    assert.deepEqual(requested, ['data/meta.json', 'data/elev.txt']);
+  } finally { globalThis.fetch = oldFetch; }
+});
+
 test('declared thermal and radiation data enable their models', () => {
   const N = 250, meta = {
     N, body: { name: 'Mars', radius: 3396190 },

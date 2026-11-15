@@ -33,7 +33,7 @@ export function imageData(im) {
   var cx = cv.getContext('2d'); cx.drawImage(im, 0, 0); return cx.getImageData(0, 0, cv.width, cv.height);
 }
 
-export async function loadData(base) {
+export async function loadData(base, selectedLayers) {
   base = base || 'data/';
   async function get(name) {
     var response = await fetch(base + name);
@@ -48,6 +48,15 @@ export async function loadData(base) {
       meta.lonW >= meta.lonE || meta.latS >= meta.latN ||
       meta.latS < -90 || meta.latN > 90 || meta.lonW < -180 || meta.lonE > 180) {
     throw new Error('Invalid metadata: schema 1, body radius, grid size and geographic bounds are required.');
+  }
+  if (selectedLayers) {
+    var available = meta.layers || {}, selected = {};
+    if (selectedLayers.optical && available.image) selected.image = available.image;
+    if (selectedLayers.hillshade && available.hillshade) selected.hillshade = available.hillshade;
+    if (selectedLayers.thermal && available.thermal) selected.thermal = available.thermal;
+    if (selectedLayers.traverse && available.traverse) selected.traverse = available.traverse;
+    if (selectedLayers.minerals && available.crism) selected.crism = available.crism;
+    meta.layers = selected;
   }
   var b64 = await (await get('elev.txt')).text(), bin = atob(b64.trim()), raw = new Uint8Array(bin.length);
   if (bin.length !== meta.N * meta.N * 4) throw new Error('Elevation size does not match the grid.');
