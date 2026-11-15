@@ -132,6 +132,31 @@ export function segStats(grid, path, eff) {
   return { dist: dist, climb: climb, desc: desc, maxSlope: maxSl, caution: caution, sand: sand, dose: dose, times: times };
 }
 
+// Straight-line check: walk each leg between the same stops in order as an 8-connected line; any blocked step makes time Infinity.
+export function straightLine(grid, P) {
+  var N = grid.N, blocked = 0, maxSlope = 0, time = 0;
+  for (var s = 0; s + 1 < P.seq.length; s++) {
+    var u = P.cells[P.seq[s]], t = P.cells[P.seq[s + 1]];
+    if (u < 0 || t < 0) continue;
+    var ti = t % N, tj = (t / N) | 0, ui = u % N, uj = (u / N) | 0;
+    var adi = Math.abs(ti - ui), adj = Math.abs(tj - uj), n = Math.max(adi, adj), err = 0;
+    for (var q = 0; q < n; q++) {
+      var di = 0, dj = 0;
+      if (ui !== ti) di = ti > ui ? 1 : -1;
+      if (uj !== tj) dj = tj > uj ? 1 : -1;
+      // Bresenham: take the minor-axis step only when the error term says so
+      if (adi >= adj) { err += adj; if (err * 2 < adi) dj = 0; else err -= adi; }
+      else { err += adi; if (err * 2 < adj) di = 0; else err -= adj; }
+      var k = 0; for (; k < 8; k++) if (DI[k] === di && DJ[k] === dj) break;
+      var v = (uj + dj) * N + ui + di, c = stepTime(grid, u, v, k, P.eff);
+      if (c === Infinity) blocked++; else time += c;
+      if (grid.SLOPE[v] > maxSlope) maxSlope = grid.SLOPE[v];
+      u = v; ui += di; uj += dj;
+    }
+  }
+  return { blocked: blocked, maxSlope: maxSlope, time: blocked ? Infinity : time };
+}
+
 // ---------- Schedule (instant: duration, reserve and stop times) ----------
 // Builds the timeline from the legs already computed: travel events + work events, total time and dose.
 export function schedule(grid, P) {
