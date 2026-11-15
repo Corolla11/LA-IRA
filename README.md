@@ -2,7 +2,7 @@
   <img width="200" height="200" src="A-IRA.png" alt="A-IRA">
   <h1>LA-IRA
   <br>
-  Ares - Integrated route assistant
+  LunarAres - Integrated route assistant
   </h1>
 </div>
 EVA (extravehicular walk) planning tool for astronauts, built for the NASA Space Apps challenge. Two bodies are included: Mars (a 2.46 x 2.46 km area around the Mount Sharp boxwork formations in Gale crater, explored by Curiosity in 2025) and the Moon (the Apollo 17 landing site in the Taurus-Littrow valley, with only topography and optical imagery). Data sources are modular: on load the app checks every source and the user picks which layers feed the planner.
