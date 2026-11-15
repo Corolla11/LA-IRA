@@ -1,0 +1,23 @@
+# Generated data and builds (regenerate with tools/prepare_data.py and tools/build_artifact.py)
+app/data/
+dist/
+out*/
+
+# Python environment and caches
+.venv/
+__pycache__/
+*.pyc
+
+# Claude Code / AI agent files (local only)
+.claude/
+CLAUDE.md
+AGENTS.md
+
+# Internal: tests, golden route and migration notes (local only)
+tests/
+docs/
+
+# OS / editor
+Thumbs.db
+.DS_Store
+.vscode/
