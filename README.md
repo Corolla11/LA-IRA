@@ -1,4 +1,5 @@
 # Ares - Integrated route assistant
+<img width="420" height="420" alt="logo" src="https://github.com/user-attachments/assets/7b92f441-1325-4500-ad66-0a714569ba3d" />
 
 EVA (extravehicular walk) planning tool for an astronaut on Mars, built for the NASA Space Apps challenge. It covers a 2.46 x 2.46 km area around the Mount Sharp boxwork formations in Gale crater, explored by Curiosity in 2025.
 
